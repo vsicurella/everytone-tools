@@ -4,3 +4,5 @@ bb*
 *_plots
 *.so
 hentropy.m
+*.code-workspace
+farey10000*.npy
