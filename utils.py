@@ -65,6 +65,21 @@ def farey_len(n):
 def farey(n):
     return _farey(n)
 
+
+def get_cf(num, maxdepth=20, round0thresh=1e-5):
+    n = num
+    cf = [] # the continued fraction
+    for i in range(maxdepth):
+        cf.append(int(n))
+        n -= cf[i]
+
+        if (n > round0thresh):
+            n = 1 / n
+        else:
+            break
+
+    return cf
+
 if __name__ == '__main__':
     size = 50
     print("Farey sequence N="+str(size))
