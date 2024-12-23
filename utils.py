@@ -80,6 +80,22 @@ def get_cf(num, maxdepth=20, round0thresh=1e-5):
 
     return cf
 
+def getUniqueFilename(filename, type):
+    out = os.path.join(f'{filename}.{type}')
+    if not os.path.exists(os.path.join(out)):
+        return out
+    max_iter = 99
+    Path=lambda f: os.path.join(f"{filename}_{f}.{type}")
+    f=0
+    for f in range(max_iter):
+        f+=1
+        out=Path(f)
+        while os.path.exists(out):
+            f+=1
+            out=Path(f)
+        break
+    return out
+
 if __name__ == '__main__':
     size = 50
     print("Farey sequence N="+str(size))
