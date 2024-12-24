@@ -62,7 +62,7 @@ def show_plot(data, title="Plot", xlabel="X", ylabel="Y", **kwArgs):
             # primary_plot.set_label(kwArgs['label-default'])
 
     if "filename" in kwArgs:
-        print("Writing: " + kwArgs["filename"])
+        self.vprint(1, "Writing: " + kwArgs["filename"])
         plt.savefig(kwArgs["filename"], dpi=kwArgs["dpi"], pad_inches=0, bbox_inches='tight')
 
     plt.show()
@@ -91,6 +91,7 @@ class HarmonicEntropy:
     weight_option = None
 
     kwArgs = None
+    verbose = 1
 
     # state
     x_axis = None
@@ -126,6 +127,9 @@ class HarmonicEntropy:
             weight = 'default'
         self.he3 = he3
         self.kwArgs = kwArgs
+        if "verbose" in self.kwArgs:
+            self.verbose = int(self.kwArgs["verbose"])
+
         self.update(spread, N, res, limit, alpha)
 
         if self.he3:
@@ -134,6 +138,10 @@ class HarmonicEntropy:
             self.prepareBasis()
 
         self.setWeightingOption(weight)
+
+    def vprint(self, level, str):
+        if self.verbose >= level:
+            print(str)
 
     def suffix(self):
         tokens = {}
@@ -154,33 +162,46 @@ class HarmonicEntropy:
         return "_".join([ f'{tokens[k]}{k}' for k in tokens ])
 
     def update(self, s=None, N=None, res=None, limit=None, a=None, weight=None):
+        updated = False
         if s is not None:
+            updated = updated or self.s != s
             self.s = s
         if N is not None:
+            updated = updated or self.N != N
             self.N = N
         if res is not None:
+            updated = updated or self.res != res
             self.res = res
         if limit is not None:
+            updated = updated or self.limit != limit
             self.limit = limit
         if a is not None:
+            updated = updated or self.a != a
             self.a = a
         if weight is not None:
+            updated = updated or self.weight_option != weight
             self.setWeightingOption(weight)
 
-        self.x_axis = np.arange(0, int(np.ceil(limit+res)), step=res)
-        self.x_length = len(self.x_axis)
+        if updated:
+            if N is not None or res is not None or limit is not None:
+                self.x_axis = np.arange(0, int(np.ceil(self.limit+self.res)), step=self.res)
+                self.x_length = len(self.x_axis)
 
-        self.period_harmonic = int(np.round(np.exp2(self.limit / 1200)))
+            if limit is not None:
+                self.period_harmonic = int(np.round(np.exp2(self.limit / 1200)))
 
-        self.i_ss2 = 1 / (self.s**2 * 2)
-        self.ssqrt2pi = self.s * 2.50662827463
+            if s is not None:
+                self.i_ss2 = 1 / (self.s**2 * 2)
+                self.ssqrt2pi = self.s * 2.50662827463
+
+        return updated
 
     def prepareBasis(self):
         file = os.path.join(os.path.dirname(__file__), "he_data", "farey{}.npy".format(self.N))
         if os.path.exists(file):
             basis_set = np.load(file)
         else:
-            print("Calculating rationals...")
+            self.vprint(1, "Calculating rationals...")
             basis_set = farey(self.N)
             np.save(file, basis_set)
 
@@ -207,14 +228,14 @@ class HarmonicEntropy:
         if os.path.exists(file):
             triplets = np.load(file)
         else:
-            print("Calculating rationals...")
+            self.vprint(1, "Calculating rationals...")
             triplets = get_triplet_basis(self.N, self.period_harmonic)
             np.save(file, triplets)
 
-        print(f"Preparing basis...")
+        self.vprint(1, f"Preparing basis...")
         self.basis_triad_set = np.asarray(triplets)
         self.basis_length = self.basis_triad_set.shape[0]
-        print(f"\tSet size: {self.basis_length}")
+        self.vprint(1, f"\tSet size: {self.basis_length}")
 
         # self.basis_triad_ratios = np.ones((self.basis_triad_set.shape[0], 2))
         # self.basis_triad_ratios[:,0] = self.basis_triad_set[:,1] / self.basis_triad_set[:,0]
@@ -255,7 +276,7 @@ class HarmonicEntropy:
             self.weight_func_name = "wx" if name is None else name
 
     def setWeightingOption(self, option):
-        option = option
+        self.option = option
         if option == 'default' or option is None or option == 'sqrtnd':
             self.setDefaultWeightingFunction()
         elif option == 'lencf':
@@ -280,7 +301,7 @@ class HarmonicEntropy:
             self.setDefaultWeightingFunction()
 
         else:
-            option = None
+            self.option = None
             raise Exception("Unknown weighing option: " + str(option))
 
     def setDefaultWeightingFunction(self):
@@ -331,7 +352,7 @@ class HarmonicEntropy:
         return np.log(pa / (psi ** alpha + sigma) + sigma) / (1 - alpha)
     
     def convolve3HRE(self):
-        print("Weighing...")
+        self.vprint(1, "Weighing...")
         if self.weight_func is None:
             base_weights = 1 / np.sqrt(np.prod(self.basis_triad_set, axis=1))
         else:
@@ -343,14 +364,14 @@ class HarmonicEntropy:
         Ka = np.zeros(shape=(self.x_length, self.x_length))
         np.add.at(Ka, self.basis_triad_xy, base_weights ** self.a)
 
-        print("Smoothing...")
+        self.vprint(1, "Smoothing...")
         s_range = round(self.s*5)
         sx = np.arange(-s_range, s_range, self.res)
         sy = np.arange(-s_range, s_range, self.res)
         x, y = np.meshgrid(sx, sy)
         S = np.exp(-((x**2 + y**2) * self.i_ss2))
 
-        print("Convolving...")
+        self.vprint(1, "Convolving...")
         psi = signal.convolve(K, S, mode = 'same')
         pa = signal.convolve(Ka, S**self.a, mode = 'same')
 
@@ -361,7 +382,7 @@ class HarmonicEntropy:
 
         entropy = np.log((pa + sigma) / ((psi ** alpha) + sigma)) / (1 - alpha)
 
-        print("Masking...")
+        self.vprint(1, "Masking...")
         # clean up
         gx = np.arange(0, self.x_length, 1)
         gy = np.arange(0, self.x_length, 1)
@@ -396,12 +417,12 @@ class HarmonicEntropy:
             file = os.path.join(os.path.dirname(__file__), "he_data", "3he_{}".format(self.suffix()))
         else:
             file = os.path.join(os.path.dirname(__file__), "he_data", "he_{}".format(self.suffix()))
-        print(f"Writing: {file}")
+        self.vprint(1, f"Writing: {file}")
         np.save(file, self.Entropy)
         np.savetxt(file+".txt", self.Entropy,  fmt="%f")
 
     def plot(self, save=True):
-        print("Plotting...")
+        self.vprint(1, "Plotting...")
 
         plot_data = self.Entropy
 
