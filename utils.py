@@ -43,8 +43,14 @@ def getUniqueFilename(filename, type):
 
 if __name__ == '__main__':
     import random
-    r = random.Random()
-    ratio = r.random() + 1
-    print(f"Continued fraction of: {ratio}")
-    print(get_cf(ratio))
+    import sys
+
+    N = 10
+    if len(sys.argv) > 1:
+        N = int(sys.argv[1])
+
+    for i in range(100):
+        r = random.Random()
+        ratio = r.random() + 1
+        print(f"Continued fraction of {ratio}:\t{get_cf(ratio)}")
 

@@ -66,6 +66,7 @@ def show_plot(data, title="Plot", xlabel="X", ylabel="Y", **kwArgs):
         plt.savefig(kwArgs["filename"], dpi=kwArgs["dpi"], pad_inches=0, bbox_inches='tight')
 
     plt.show()
+    return plt
 
 def is_odd(integer):
     return integer & 1
@@ -87,6 +88,7 @@ class HarmonicEntropy:
 
     weight_func = None
     weight_func_name = None
+    weight_option = None
 
     kwArgs = None
 
@@ -110,6 +112,8 @@ class HarmonicEntropy:
 
     Entropy = None
     EntropyAltWeights = None
+
+    plotted = False
 
     # pre-computes
     i_ss2 = None
@@ -251,6 +255,7 @@ class HarmonicEntropy:
             self.weight_func_name = "wx" if name is None else name
 
     def setWeightingOption(self, option):
+        option = option
         if option == 'default' or option is None or option == 'sqrtnd':
             self.setDefaultWeightingFunction()
         elif option == 'lencf':
@@ -275,46 +280,26 @@ class HarmonicEntropy:
             self.setDefaultWeightingFunction()
 
         else:
+            option = None
             raise Exception("Unknown weighing option: " + str(option))
 
     def setDefaultWeightingFunction(self):
         self.setWeightingFunction(None)
     
     def setLenCfWeight(self):
-        weigh_nd = lambda ns,ds: [ len(get_cf(ns[i]/ds[i])) for i in range(len(ns)) ]
-        def weigh(array):
-            shape = (self.basis_length, array.shape[1]-1)
-            weights = np.zeros(shape)
-            for c in range(shape[1]):
-                weights[:,c] = weigh_nd(array[:,c], array[:,c+1])
-            if shape[1] > 1:
-               return np.sqrt(np.prod(weights, axis=1))
-            return weights
+        weigh_ratio = lambda ratio: len(get_cf(ratio))
+        weigh = lambda a: np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1)
         self.setWeightingFunction(weigh, "lencf")
 
     def setLenMaxCfWeight(self):
-        prod = lambda cf: len(cf) * max(cf)
-        prod_nd = lambda ns,ds: [ prod(get_cf(ns[i]/ds[i])) for i in range(len(ns)) ]
-        def weigh(array):
-            shape = (self.basis_length, array.shape[1]-1)
-            weights = np.zeros(shape)
-            for c in range(shape[1]):
-                weights[:,c] = np.sqrt(prod_nd(array[:,c], array[:,c+1]))
-            if shape[1] > 1:
-               return np.sqrt(np.prod(weights, axis=1))
-            return weights
+        weigh_cf = lambda cf: len(cf) * max(cf)
+        weigh_ratio = lambda ratio: weigh_cf(get_cf(ratio))
+        weigh = lambda a: np.sqrt(np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1))
         self.setWeightingFunction(weigh, "sqrt(len(cf)*max(cf))")
 
     def setSumCfWeight(self):
-        sum_nd = lambda ns,ds: [ sum(get_cf(ns[i]/ds[i])) for i in range(len(ns)) ]
-        def weigh(array):
-            shape = (self.basis_length, array.shape[1]-1)
-            weights = np.zeros(shape)
-            for c in range(shape[1]):
-                weights[:,c] = np.asarray(sum_nd(array[:,c], array[:,c+1]))
-            if shape[1] > 1:
-               return np.sqrt(np.prod(weights, axis=1))
-            return weights
+        weigh_ratio = lambda ratio: sum(get_cf(ratio))
+        weigh = lambda a: np.sqrt(np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1))
         self.setWeightingFunction(weigh, "sum(cf)")
 
     def convolveHRE(self):
@@ -415,7 +400,7 @@ class HarmonicEntropy:
         np.save(file, self.Entropy)
         np.savetxt(file+".txt", self.Entropy,  fmt="%f")
 
-    def plot(self):
+    def plot(self, save=True):
         print("Plotting...")
 
         plot_data = self.Entropy
@@ -466,16 +451,19 @@ class HarmonicEntropy:
 
         plotArgs["annotate"] = annotation
 
-        filename = os.path.join("he_plots", f'3he_{self.suffix()}')
-        plotArgs["filename"] = getUniqueFilename(filename, "png")
-        plotArgs["dpi"] = 480
+        if save:
+            filename = os.path.join("he_plots", f'3he_{self.suffix()}')
+            plotArgs["filename"] = getUniqueFilename(filename, "png")
+            plotArgs["dpi"] = 480
 
         if self.he3:
             plotArgs["imshow"]=True
             plotArgs["figsize"]=(16,16)
             plotArgs["cmap"]="inferno"
 
-        show_plot(plot_data, 
+        self.plotted = True
+
+        return show_plot(plot_data, 
                   title, 
                   "Dyad (cents)", 
                   "Dissonance",
