@@ -62,7 +62,7 @@ def show_plot(data, title="Plot", xlabel="X", ylabel="Y", **kwArgs):
             # primary_plot.set_label(kwArgs['label-default'])
 
     if "filename" in kwArgs:
-        self.vprint(1, "Writing: " + kwArgs["filename"])
+        print(1, "Writing: " + kwArgs["filename"])
         plt.savefig(kwArgs["filename"], dpi=kwArgs["dpi"], pad_inches=0, bbox_inches='tight')
 
     plt.show()
@@ -110,6 +110,9 @@ class HarmonicEntropy:
 
     x_length = None
     basis_length = None
+
+    updateBasis = None
+    recalculate = None
 
     Entropy = None
     EntropyAltWeights = None
@@ -163,27 +166,33 @@ class HarmonicEntropy:
 
     def update(self, s=None, N=None, res=None, limit=None, a=None, weight=None):
         updated = False
-        if s is not None:
-            updated = updated or self.s != s
-            self.s = s
         if N is not None:
             updated = updated or self.N != N
             self.N = N
+            self.updateBasis = True
         if res is not None:
             updated = updated or self.res != res
             self.res = res
+            self.updateBasis = True
         if limit is not None:
             updated = updated or self.limit != limit
             self.limit = limit
-        if a is not None:
-            updated = updated or self.a != a
-            self.a = a
+            self.updateBasis = True
         if weight is not None:
             updated = updated or self.weight_option != weight
             self.setWeightingOption(weight)
+            self.recalculate = True
+        if a is not None:
+            updated = updated or self.a != a
+            self.a = a
+            self.recalculate = True
+        if s is not None:
+            updated = updated or self.s != s
+            self.s = s
+            self.recalculate = True
 
         if updated:
-            if N is not None or res is not None or limit is not None:
+            if res is not None or limit is not None:
                 self.x_axis = np.arange(0, int(np.ceil(self.limit+self.res)), step=self.res)
                 self.x_length = len(self.x_axis)
 
@@ -193,6 +202,9 @@ class HarmonicEntropy:
             if s is not None:
                 self.i_ss2 = 1 / (self.s**2 * 2)
                 self.ssqrt2pi = self.s * 2.50662827463
+
+            if self.updateBasis:
+                self.recalculate = True
 
         return updated
 
@@ -400,17 +412,19 @@ class HarmonicEntropy:
             file = os.path.join(os.path.dirname(__file__), "he_data", "3he_{}.npy".format(self.suffix()))
             if loadFile and os.path.exists(file):
                 self.Entropy = np.load(file)
-                return
+            else:
+                self.Entropy = self.convolve3HRE()
 
-            self.Entropy = self.convolve3HRE()
+            self.recalculate = False
             return
 
         file = os.path.join(os.path.dirname(__file__), "he_data", "he_{}.npy".format(self.suffix()))
         if loadFile and os.path.exists(file):
             self.Entropy = np.load(file)
-            return
-
-        self.Entropy = self.convolveHRE()
+        else:
+            self.Entropy = self.convolveHRE()
+        
+        self.recalculate = False
 
     def writeEntropy(self):
         if self.he3:
@@ -420,6 +434,22 @@ class HarmonicEntropy:
         self.vprint(1, f"Writing: {file}")
         np.save(file, self.Entropy)
         np.savetxt(file+".txt", self.Entropy,  fmt="%f")
+
+    def getEntropyPlotData(self, min_cents=None, max_cents=None):
+        if self.he3:
+            pass # todo
+            return (self.x_axis, self.Entropy)
+
+        startX = 0
+        endX = self.x_length
+
+        if min_cents is not None:
+            startX = max(0, int(np.round(min_cents / self.res)))
+
+        if max_cents is not None:
+            endX = min(self.x_length, int(np.round(max_cents / self.res)))
+
+        return (self.x_axis[startX:endX], self.Entropy[startX:endX])
 
     def plot(self, save=True):
         self.vprint(1, "Plotting...")
