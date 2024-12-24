@@ -1,55 +1,26 @@
 """
 
   https://en.xen.wiki/w/Harmonic_entropy
+  help from https://gist.github.com/Sin-tel/a0279a2fe758e5a79496ba182d4ed992
+            https://gist.github.com/Sin-tel/8d1a55a0e34ca159ac6aa61e325648d2
 
 """
 
 import argparse
 import os
 
-from math import gcd
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.signal as signal
 
 from utils import *
-
-CENTS_ROUND=3
-RATIO_ROUND=6
-
-def farey_set_to_basis(ndSet, harmonics=1):
-    size = ndSet.shape[0]
-    period_shape = (size * harmonics - int(harmonics > 1), 2)
-
-    basis = np.zeros(period_shape, dtype=np.uint)
-    basis[:size, 0] = ndSet[:, 0] + ndSet[:, 1]
-    basis[:size, 1] = ndSet[:, 1]
-
-    i = 0
-    p = size
-    for i in range(1, period_shape[0] - size + 1):
-        if np.mod(basis[i, 1], 2) == 0:
-            basis[p,:] = [ basis[i, 0], basis[i, 1] // 2 ]
-        else:
-            basis[p,:] = [ basis[i, 0] * 2, basis[i, 1] ]
-        p += 1
-    return basis
-
-CENTS_LOOKUP={}
-
-def ratio_to_cents(ratio):
-    kw = str(ratio)
-    if kw in CENTS_LOOKUP:
-        return CENTS_LOOKUP[kw]
-    CENTS_LOOKUP[kw] = np.round(np.log2(ratio) * 1200, CENTS_ROUND) 
-    return CENTS_LOOKUP[kw]
+from basis import *
 
 def show_plot(data, title="Plot", xlabel="X", ylabel="Y", **kwArgs):
     default_label = ylabel
     if "label-default" in kwArgs:
         default_label = kwArgs["label-default"]
         del kwArgs["label-default"]
-
     if "imshow" in kwArgs:
         cmap = None if "cmap" not in kwArgs else kwArgs["cmap"]
         if "figsize" in kwArgs:
@@ -203,29 +174,23 @@ class HarmonicEntropy:
     def prepareBasis(self):
         file = os.path.join(os.path.dirname(__file__), "he_data", "farey{}.npy".format(self.N))
         if os.path.exists(file):
-            pairs = np.load(file)
+            basis_set = np.load(file)
         else:
             print("Calculating rationals...")
-            pairs = farey(self.N)
-            np.save(file, pairs)
+            basis_set = farey(self.N)
+            np.save(file, basis_set)
 
-        self.updateBasisSet(pairs)
+        self.basis_set      = basis_set
+        self.basis_periods  = farey_set_to_basis(self.basis_set, self.period_harmonic)
+        self.basis_length   = self.basis_periods.shape[0]
 
-    def updateBasisSet(self, newBasis):
-        self.basis_set      = newBasis
-        self.basis_periods  = farey_set_to_basis(self.basis_set, np.log2(self.period_harmonic))
-
-        self.basis_ratios   = np.round(self.basis_periods[:, 0] / self.basis_periods[:, 1], RATIO_ROUND)
-        self.basis_cents    = np.vectorize(ratio_to_cents)(self.basis_ratios)
-        self.basis_length   = len(self.basis_cents)
+        # self.basis_ratios   = np.round(self.basis_periods[:, 0] / self.basis_periods[:, 1], RATIO_ROUND)
+        self.basis_cents    = nd_basis_to_cents(self.basis_periods).ravel()
 
     def prepare3heBasis(self):
-        # somewhat arbitrary cutoff points
-        default_c_limit = 27_000_000
-        # c_limit = 120_000_000
-        c_limit = default_c_limit
 
-        harmonic = int(max(self.period_harmonic, 2))
+        default_c_limit = 27_000_000
+        c_limit = default_c_limit
 
         file_basename = "he3_basis"
         file_params = { "N": self.N, "h": self.period_harmonic}
@@ -239,15 +204,7 @@ class HarmonicEntropy:
             triplets = np.load(file)
         else:
             print("Calculating rationals...")
-
-            # generate all triples a:b:c within the period
-            triplets = []
-            for i in range(1, self.N):
-                for j in range(i, harmonic*i+1):
-                    for k in range(j, harmonic*i+1):
-                        if i*j*k < c_limit and gcd(i,j,k) == 1:
-                            triplets.append([i,j,k])
-
+            triplets = get_triplet_basis(self.N, self.period_harmonic)
             np.save(file, triplets)
 
         print(f"Preparing basis...")
@@ -259,10 +216,7 @@ class HarmonicEntropy:
         # self.basis_triad_ratios[:,0] = self.basis_triad_set[:,1] / self.basis_triad_set[:,0]
         # self.basis_triad_ratios[:,1] = self.basis_triad_set[:,2] / self.basis_triad_set[:,1]
 
-        # self.basis_triad_cents = np.vectorize(ratio_to_cents)(self.basis_triad_ratios)
-        self.basis_triad_cents = np.ones((self.basis_triad_set.shape[0], 2))
-        self.basis_triad_cents[:,0] = np.round(np.log2(self.basis_triad_set[:,1] / self.basis_triad_set[:,0]) * 1200.0, CENTS_ROUND)
-        self.basis_triad_cents[:,1] = np.round(np.log2(self.basis_triad_set[:,2] / self.basis_triad_set[:,1]) * 1200.0, CENTS_ROUND)
+        self.basis_triad_cents = nd_basis_to_cents(self.basis_triad_set)
 
         self.basis_triad_x = np.round((self.basis_triad_cents[:,0] + (self.basis_triad_cents[:,1] / 2)) / self.res).astype(np.int64)
         self.basis_triad_y = np.round(self.basis_triad_cents[:,1] * self.tri_y_scalar / self.res).astype(np.int64)
@@ -272,14 +226,14 @@ class HarmonicEntropy:
         basis_n = np.extract(mask, self.basis_periods[:,0])
         basis_d = np.extract(mask, self.basis_periods[:,1])
         self.basis_periods  = np.column_stack((basis_n, basis_d))
-        self.basis_ratios   = np.extract(mask, self.basis_ratios)
+        # self.basis_ratios   = np.extract(mask, self.basis_ratios)
         self.basis_cents    = np.extract(mask, self.basis_cents)
         self.basis_length   = len(self.basis_cents)
 
         if self.he3:
             # self.basis_periods[:,2] = np.extract(mask, self.basis_periods[:,2])
             # self.basis_triad_pedals = np.extract(mask, self.basis_triad_pedals)
-            self.basis_triad_ratios = np.extract(mask, self.basis_triad_ratios)
+            # self.basis_triad_ratios = np.extract(mask, self.basis_triad_ratios)
             self.basis_triad_cents = np.extract(mask, self.basis_triad_cents)
             self.basis_triad_x = np.extract(mask, self.basis_triad_x)
             self.basis_triad_y = np.extract(mask, self.basis_triad_y)
@@ -369,35 +323,25 @@ class HarmonicEntropy:
         else:
             base_weights = 1 / self.weight_func(self.basis_periods)
 
-        base_weighted_alpha = np.power(base_weights, self.a)
-
         # turn basis cents into a sum of delta functions
         basis_index = np.rint(self.basis_cents / self.res).astype(np.uint32)
 
         K = np.zeros(self.x_length)
-        Ka =  np.zeros(self.x_length)
-        for ji in range(self.basis_length):
-            di = basis_index[ji]
-            if di < 0 or di >= self.x_length:
-                print(f"Warning: ignoring basis overflow with {self.basis_periods[ji,0]}/{self.basis_periods[ji,1]}")
-                continue
-            K[di] += base_weights[ji]
-            Ka[di] += base_weighted_alpha[ji]
+        np.add.at(K, basis_index, base_weights)
+        Ka = np.zeros(self.x_length)
+        np.add.at(Ka, basis_index, np.power(base_weights, self.a))
 
-        # S = np.exp(-np.square(self.x_axis - self.x_length//2) * self.i_ss2) / self.ssqrt2pi
-        # s_range = round(self.s * 5)
-        # xr=np.arange(-self.ssqrt2pi, self.ssqrt2pi, self.res)
-        S = np.exp(-np.arange(-self.ssqrt2pi, self.ssqrt2pi, self.res)**2 * self.i_ss2)
-        # plt.plot(xr,S)
-        # plt.show()
-        # return
+        s_range = np.round(self.s * 5)
+        xs = np.arange(-s_range, s_range, 1)
+        S = np.exp(-(xs**2) * self.i_ss2)
+
+        psi = signal.convolve(K, S, 'same')
+        pa = signal.convolve(Ka, S ** self.a, 'same')
+
         sigma = 1e-16
         alpha = self.a
         if alpha == 1:
             alpha = sigma
-
-        psi = signal.convolve(K, S, 'same')
-        pa = signal.convolve(Ka, S ** alpha, 'same')
 
         return np.log(pa / (psi ** alpha + sigma) + sigma) / (1 - alpha)
     
@@ -567,5 +511,5 @@ if __name__ == "__main__":
     if save:
         he.writeEntropy()
 
-    if plot:
+    if plot or not save:
         he.plot()

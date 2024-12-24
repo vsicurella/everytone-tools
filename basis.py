@@ -116,12 +116,11 @@ def get_triplet_basis(N, harmonic_limit=2, product_limit=27_000_000):
     return np.asarray(triplets)
 
 def nd_basis_to_cents(nd_periods):
-    to_cents = np.vectorize(utils.ratio_to_cents, otypes='f')
+    to_cents = np.vectorize(utils.ratio_to_cents)
     cents = to_cents(nd_periods[:,1:] / nd_periods[:,:-1])
     return cents
 
 if __name__ == '__main__':
-
     N = 10
     harmonic = 2
     basis_set = get_farey_sequence_basis(N, harmonic)
