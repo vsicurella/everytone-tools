@@ -30,40 +30,6 @@ void farey(int n, ull len, int* ndarray)
     }
 }
 
-void farey_test(int n)
-{
-    #ifdef DEBUG
-    typedef struct { int d, n; } frac;
-    frac f1 = {0, 1}, f2 = {1, n}, t;
-    int k;
-    // int i_n = 0, i_d = len;
-
-    // ndarray[i_n] = 0;
-    // ndarray[i_d] = 1;
-
-    // ndarray[len-1] = 1;
-    // ndarray[(len << 1)-1] = 1;
-    int i = 0;
-    // printf("%d/%d %d/%d", 0, 1, 1, n);
-    printf("0 1\n");
-    while (f2.n > 1) {
-        k = (n + f1.n) / f2.n;
-        t = f1, f1 = f2, f2 = (frac) { f2.d * k - t.d, f2.n * k - t.n };
-        printf("%d %d\n", f2.d, f2.n);
-        // ndarray[++i_n] = f2.d;
-        // ndarray[++i_d] = f2.n;
-        i++;
-
-        // if (i % 10 == 0)
-        //     printf(" \n");
-
-    }
-    printf("1 1\n");
-
-    putchar('\n');
-    #endif
-}
-
 ull *cache;
 size_t ccap;
 

@@ -1,13 +1,13 @@
 CC = gcc
-CFLAGS = -Wall -g0
+CFLAGS = 
 
-UTILS_DIR = ./pyc_utils
-UTILS_TARGET = $(UTILS_DIR)/utils.o
+FAREY_DIR = ./c_farey
+FAREY_TARGET = $(FAREY_DIR)/farey.so
 
-all: $(UTILS_TARGET)
+all: $(FAREY_TARGET)
 
-$(UTILS_TARGET): $(UTILS_DIR)/utils.c
-	$(CC) $(CFLAGS) -arch arm64 -c $< -o $@ 
+$(FAREY_TARGET): $(FAREY_DIR)/farey.c
+	$(CC) -shared $(CFLAGS) -o $@ $<
 
 clean:
-	rm $(UTILS_TARGET)
+	rm $(FAREY_TARGET)
