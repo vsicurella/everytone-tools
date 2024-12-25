@@ -342,9 +342,8 @@ class HarmonicEntropy:
                 self.basis_triad_x = np.round((self.basis_cents[:,0] + (self.basis_cents[:,1] / 2)) / self.res).astype(np.int64)
                 self.basis_triad_y = np.round(self.basis_cents[:,1] * self.tri_y_scalar / self.res).astype(np.int64)
                 self.basis_transform = (self.basis_triad_y, self.basis_triad_x)
-                return self.basis_transform
-            self.basis_transform = np.rint(self.basis_cents / self.res).astype(np.uint32)
-            return
+            else: 
+                self.basis_transform = np.rint(self.basis_cents / self.res).astype(np.uint32)
         else:
             self.basis_transform = self.basis_transform_func(self.basis_periods)
 
