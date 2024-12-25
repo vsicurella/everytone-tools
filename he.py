@@ -86,6 +86,9 @@ class HarmonicEntropy:
 
     basis_filter = None
 
+    basis_transform_func = None
+    basis_transform_option = None
+
     weight_func = None
     weight_func_name = None
     weight_option = None
@@ -95,54 +98,59 @@ class HarmonicEntropy:
 
     # state
     x_axis = None
+    x_length = None
 
     period_harmonic = None
     basis_set = None
     basis_periods = None
-    basis_ratios = None
-    basis_cents = None
-
-    basis_triad_pedals = None
-    basis_triad_cents = None
-    basis_triad_x = None
-    basis_triad_y = None
-    basis_triad_xy = None
-
-    x_length = None
     basis_length = None
 
+    basis_ratios = None
+    basis_cents = None
+    
+    basis_weights = None
+    basis_weight_alphas = None
+    basis_transform = None
+    basis_distribution = None
+    basis_distribution_alpha = None
+    basis_spread = None
+    basis_spread_alphas = None
+
+    updateX = None
+    regenBasis = None
     updateBasis = None
-    recalculate = None
+    updateWeights = None
+    updateTransform = None
+    updateDistribution = None
+    updateSpread = None
+    updateAlpha = None
+    updateMask = None
+
+    loadedEntropyFile = None
 
     Entropy = None
     EntropyAltWeights = None
-
-    plotted = False
+    entropy_mask = None
 
     # pre-computes
     i_ss2 = None
     ssqrt2pi = None
-
     tri_y_scalar = np.sqrt(3) / 2
 
-    def __init__(self, spread=17, N=1000, res=1, limit=2400, alpha=8, weight=None, he3=False, **kwArgs):
-        if weight is None:
-            weight = 'default'
+    def __init__(self, spread=17, N=1000, res=1, limit=2400, alpha=8, he3=False, **kwArgs):
         self.he3 = he3
         self.kwArgs = kwArgs
+        
         if "verbose" in self.kwArgs:
             self.verbose = int(self.kwArgs["verbose"])
 
-        self.update(spread, N, res, limit, alpha)
+        weight = None
+        if "weight" in self.kwArgs:
+            weight = self.kwArgs["weight"]
 
-        if self.he3:
-            self.prepare3heBasis()
-        else:
-            self.prepareBasis()
+        self.update(spread, N, res, limit, alpha, weight)
 
-        self.setWeightingOption(weight)
-
-    def vprint(self, level, str):
+    def _vprint(self, level, str):
         if self.verbose >= level:
             print(str)
 
@@ -169,290 +177,331 @@ class HarmonicEntropy:
         if N is not None:
             updated = updated or self.N != N
             self.N = N
-            self.updateBasis = True
+            self.regenBasis = True
         if res is not None:
             updated = updated or self.res != res
             self.res = res
-            self.updateBasis = True
+            self.updateX = True
         if limit is not None:
             updated = updated or self.limit != limit
             self.limit = limit
-            self.updateBasis = True
+            self.updateX = True
+            self.regenBasis = True
         if weight is not None:
             updated = updated or self.weight_option != weight
             self.setWeightingOption(weight)
-            self.recalculate = True
         if a is not None:
             updated = updated or self.a != a
             self.a = a
-            self.recalculate = True
+            self.updateAlpha = True
         if s is not None:
             updated = updated or self.s != s
             self.s = s
-            self.recalculate = True
-
-        if updated:
-            if res is not None or limit is not None:
-                self.x_axis = np.arange(0, int(np.ceil(self.limit+self.res)), step=self.res)
-                self.x_length = len(self.x_axis)
-
-            if limit is not None:
-                self.period_harmonic = int(np.round(np.exp2(self.limit / 1200)))
-
-            if s is not None:
-                self.i_ss2 = 1 / (self.s**2 * 2)
-                self.ssqrt2pi = self.s * 2.50662827463
-
-            if self.updateBasis:
-                self.recalculate = True
+            self.updateSpread = True
 
         return updated
+    
+    def _prepare_x_axis(self):
+        self.x_axis = np.arange(0, int(np.ceil(self.limit+self.res)), step=self.res)
+        self.x_length = len(self.x_axis)
 
-    def prepareBasis(self):
-        file = os.path.join(os.path.dirname(__file__), "he_data", "farey{}.npy".format(self.N))
-        if os.path.exists(file):
-            basis_set = np.load(file)
+        self.period_harmonic = int(np.round(np.exp2(self.limit / 1200)))
+
+        self.updateX = False
+        self.updateBasis = True
+        self.updateTransform = True
+        self.updateMask = True
+
+    def _generate_basis(self):
+        if not self.he3:
+            file = os.path.join(os.path.dirname(__file__), "he_data", "farey{}.npy".format(self.N))
+            if os.path.exists(file):
+                basis_set = np.load(file)
+            else:
+                self._vprint(1, "Calculating rationals...")
+                basis_set = farey(self.N)
+                np.save(file, basis_set)
+
+            self.basis_set      = basis_set
         else:
-            self.vprint(1, "Calculating rationals...")
-            basis_set = farey(self.N)
-            np.save(file, basis_set)
+            default_c_limit = 27_000_000
+            c_limit = default_c_limit
 
-        self.basis_set      = basis_set
-        self.basis_periods  = farey_set_to_basis(self.basis_set, self.period_harmonic)
-        self.basis_length   = self.basis_periods.shape[0]
-
-        # self.basis_ratios   = np.round(self.basis_periods[:, 0] / self.basis_periods[:, 1], RATIO_ROUND)
-        self.basis_cents    = nd_basis_to_cents(self.basis_periods).ravel()
-
-    def prepare3heBasis(self):
-
-        default_c_limit = 27_000_000
-        c_limit = default_c_limit
-
-        file_basename = "he3_basis"
-        file_params = { "N": self.N, "h": self.period_harmonic}
-        if (c_limit != default_c_limit):
-            file_params["climit"] = c_limit
+            file_basename = "he3_basis"
+            file_params = { "N": self.N, "h": self.period_harmonic}
+            if (c_limit != default_c_limit):
+                file_params["climit"] = c_limit
+            
+            file_suffix = "_".join([ f'{file_params[kw]}{kw}' for kw in file_params ]) + ".npy"
+            
+            file = os.path.join(os.path.dirname(__file__), "he_data", file_basename + file_suffix)
+            if os.path.exists(file):
+                self.basis_set = np.load(file)
+            else:
+                self._vprint(1, "Calculating rationals...")
+                self.basis_set = get_triplet_basis(self.N, self.period_harmonic)
+                np.save(file, self.basis_set)
         
-        file_suffix = "_".join([ f'{file_params[kw]}{kw}' for kw in file_params ]) + ".npy"
-        
-        file = os.path.join(os.path.dirname(__file__), "he_data", file_basename + file_suffix)
-        if os.path.exists(file):
-            triplets = np.load(file)
+        self.regenBasis = False
+        self.updateBasis = True
+
+    def _prepare_basis_periods(self):
+        if not self.he3:
+            self.basis_periods  = farey_set_to_basis(self.basis_set, self.period_harmonic)
+            self.basis_length   = self.basis_periods.shape[0]
+            self.basis_cents    = nd_basis_to_cents(self.basis_periods).ravel()
         else:
-            self.vprint(1, "Calculating rationals...")
-            triplets = get_triplet_basis(self.N, self.period_harmonic)
-            np.save(file, triplets)
+            self._vprint(1, f"Preparing basis...")
+            self.basis_periods = np.asarray(self.basis_set)
+            self.basis_length = self.basis_periods.shape[0]
 
-        self.vprint(1, f"Preparing basis...")
-        self.basis_triad_set = np.asarray(triplets)
-        self.basis_length = self.basis_triad_set.shape[0]
-        self.vprint(1, f"\tSet size: {self.basis_length}")
-
-        # self.basis_triad_ratios = np.ones((self.basis_triad_set.shape[0], 2))
-        # self.basis_triad_ratios[:,0] = self.basis_triad_set[:,1] / self.basis_triad_set[:,0]
-        # self.basis_triad_ratios[:,1] = self.basis_triad_set[:,2] / self.basis_triad_set[:,1]
-
-        self.basis_triad_cents = nd_basis_to_cents(self.basis_triad_set)
-
-        self.basis_triad_x = np.round((self.basis_triad_cents[:,0] + (self.basis_triad_cents[:,1] / 2)) / self.res).astype(np.int64)
-        self.basis_triad_y = np.round(self.basis_triad_cents[:,1] * self.tri_y_scalar / self.res).astype(np.int64)
-        self.basis_triad_xy = (self.basis_triad_y, self.basis_triad_x)
+        self.updateBasis = False
+        self.updateWeights = True
+        if self.basis_distribution is None:
+            newShape = self.x_length
+            if self.he3:
+                newShape = (self.x_length, self.x_length)
+            self.basis_distribution = np.zeros(newShape)
+            self.basis_distribution_alpha = np.zeros(newShape)
 
     def setBasisMask(self, mask):
         basis_n = np.extract(mask, self.basis_periods[:,0])
         basis_d = np.extract(mask, self.basis_periods[:,1])
         self.basis_periods  = np.column_stack((basis_n, basis_d))
-        # self.basis_ratios   = np.extract(mask, self.basis_ratios)
         self.basis_cents    = np.extract(mask, self.basis_cents)
         self.basis_length   = len(self.basis_cents)
 
         if self.he3:
-            # self.basis_periods[:,2] = np.extract(mask, self.basis_periods[:,2])
-            # self.basis_triad_pedals = np.extract(mask, self.basis_triad_pedals)
-            # self.basis_triad_ratios = np.extract(mask, self.basis_triad_ratios)
-            self.basis_triad_cents = np.extract(mask, self.basis_triad_cents)
+            self.basis_cents = np.extract(mask, self.basis_cents)
             self.basis_triad_x = np.extract(mask, self.basis_triad_x)
             self.basis_triad_y = np.extract(mask, self.basis_triad_y)
-            self.basis_triad_xy = (self.basis_triad_x, self.basis_triad_y)
+            self.basis_transform = (self.basis_triad_x, self.basis_triad_y)
 
-    def setOddBasis(self):
-        mask = self.basis_periods[:, 0] & self.basis_periods[:, 1] & 1
-        self.setBasisMask(mask)
+    # def setOddBasis(self):
+    #     mask = self.basis_periods[:, 0] & self.basis_periods[:, 1] & 1
+    #     self.setBasisMask(mask)
 
-    def setWeightingFunction(self, func, name=None):
-        self.weight_func = func
-        if func is None:
-            self.weight_func_name = None
-        else:
-            self.weight_func_name = "wx" if name is None else name
+    def setWeightingOption(self, option, **kwArgs):
+        if option != 'custom' and option == option:
+            return
+        weigh = None
+        name = None
+        self.updateWeights = True
 
-    def setWeightingOption(self, option):
-        self.option = option
         if option == 'default' or option is None or option == 'sqrtnd':
-            self.setDefaultWeightingFunction()
+            name = 'sqrt(nd)'
         elif option == 'lencf':
-            self.setLenCfWeight()
+            weigh_ratio = lambda ratio: len(get_cf(ratio))
+            weigh = lambda a: np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1)
+            name = "lencf"
         elif option == 'lenmaxcf':
-            self.setLenMaxCfWeight()
+            weigh_cf = lambda cf: len(cf) * max(cf)
+            weigh_ratio = lambda ratio: weigh_cf(get_cf(ratio))
+            weigh = lambda a: np.sqrt(np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1))
+            name = "sqrt(len(cf)*max(cf))"
         elif option == 'sumcf':
-            self.setSumCfWeight()
+            weigh_ratio = lambda ratio: sum(get_cf(ratio))
+            weigh = lambda a: np.sqrt(np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1))
+            name = "sum(cf)"
         elif option == 'all':
-            self.weight_func_name = option
-            self.EntropyAltWeights = {}
-
-            self.setDefaultWeightingFunction()
-            self.Entropy = self.convolveHRE()
-            self.setLenCfWeight()
-            self.EntropyAltWeights['lencf'] = self.convolveHRE()
-            self.setLenMaxCfWeight()
-            self.EntropyAltWeights['lenmaxcf'] = self.convolveHRE()
-            self.setSumCfWeight()
-            self.EntropyAltWeights['sumcf'] = self.convolveHRE()
-
-            self.setDefaultWeightingFunction()
-
+            name = 'all'
+        elif option == 'custom':
+            weigh = kwArgs['weigh'] # function
+            if "name" in kwArgs:
+                name = kwArgs['name']
         else:
-            self.option = None
-            raise Exception("Unknown weighing option: " + str(option))
+            self.weight_func = None
+            self.weight_option = None
+            self.weight_func_name = None
+            raise Exception("Unknown weighting option: " + str(option))
 
-    def setDefaultWeightingFunction(self):
-        self.setWeightingFunction(None)
+        self.weight_option = option
+        self.weight_func = weigh
+        self.weight_func_name = name
+
+    def _weight_basis(self):
+        self._vprint(1, 'Weighting...')
+
+        if self.updateWeights:
+            if self.weight_func is None:
+                self.basis_weights = np.reciprocal(np.sqrt(np.prod(self.basis_periods, axis=1)))
+            else:
+                self.basis_weights = np.reciprocal(self.weight_func(self.basis_periods))
+
+        if self.updateWeights or self.updateAlpha:
+            self.basis_weight_alphas = self.basis_weights ** self.a
+
+        self.updateWeights = False
+        self.updateDistribution = True
+
+    def _transform_basis(self):
+        self._vprint(1, 'Transforming basis...')
+        if self.basis_transform_func is None:
+            if self.he3:
+                self.basis_cents = nd_basis_to_cents(self.basis_periods)
+                self.basis_triad_x = np.round((self.basis_cents[:,0] + (self.basis_cents[:,1] / 2)) / self.res).astype(np.int64)
+                self.basis_triad_y = np.round(self.basis_cents[:,1] * self.tri_y_scalar / self.res).astype(np.int64)
+                self.basis_transform = (self.basis_triad_y, self.basis_triad_x)
+                return self.basis_transform
+            self.basis_transform = np.rint(self.basis_cents / self.res).astype(np.uint32)
+            return
+        else:
+            self.basis_transform = self.basis_transform_func(self.basis_periods)
+
+        self.updateTransform = False
+        self.updateDistribution = True
     
-    def setLenCfWeight(self):
-        weigh_ratio = lambda ratio: len(get_cf(ratio))
-        weigh = lambda a: np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1)
-        self.setWeightingFunction(weigh, "lencf")
+    def _distribute_basis(self):
+        array = self.basis_distribution
+        array_alpha = self.basis_distribution_alpha
+        shape = self.basis_distribution.shape
+        if shape[0] != self.x_length:
+            if shape[0] > self.x_length: # don't resize just take slices
+                slices = 2 if self.he3 else 1
+                self.basis_distribution = array[tuple(slice(None, self.x_length) for _ in range(slices))]
+                self.basis_distribution_alpha =  array_alpha[tuple(slice(None, self.x_length) for _ in range(slices))]
+            else:
+                newShape = self.x_length
+                if self.he3:
+                    newShape = (self.x_length, self.x_length)
+                self.basis_distribution = np.resize(self.basis_distribution, newShape)
+                self.basis_distribution_alpha = np.resize(self.basis_distribution_alpha, newShape)
 
-    def setLenMaxCfWeight(self):
-        weigh_cf = lambda cf: len(cf) * max(cf)
-        weigh_ratio = lambda ratio: weigh_cf(get_cf(ratio))
-        weigh = lambda a: np.sqrt(np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1))
-        self.setWeightingFunction(weigh, "sqrt(len(cf)*max(cf))")
+        self.basis_distribution.fill(0)
+        self.basis_distribution_alpha.fill(0)
 
-    def setSumCfWeight(self):
-        weigh_ratio = lambda ratio: sum(get_cf(ratio))
-        weigh = lambda a: np.sqrt(np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1))
-        self.setWeightingFunction(weigh, "sum(cf)")
+        np.add.at(self.basis_distribution, self.basis_transform, self.basis_weights)
+        np.add.at(self.basis_distribution_alpha, self.basis_transform, self.basis_weight_alphas)
 
-    def convolveHRE(self):
-        if self.weight_func is None:
-            base_weights = 1 / np.sqrt(np.prod(self.basis_periods, axis=1))
-        else:
-            base_weights = 1 / self.weight_func(self.basis_periods)
+        self.updateDistribution = False
 
-        # turn basis cents into a sum of delta functions
-        basis_index = np.rint(self.basis_cents / self.res).astype(np.uint32)
+    def _prepare_spread(self):
+        if self.updateSpread:
+            self.i_ss2 = 1 / (self.s**2 * 2)
+            # self.ssqrt2pi = self.s * 2.50662827463
 
-        K = np.zeros(self.x_length)
-        np.add.at(K, basis_index, base_weights)
-        Ka = np.zeros(self.x_length)
-        np.add.at(Ka, basis_index, np.power(base_weights, self.a))
-
-        s_range = np.round(self.s * 5)
-        xs = np.arange(-s_range, s_range, 1)
-        S = np.exp(-(xs**2) * self.i_ss2)
-
-        psi = signal.convolve(K, S, 'same')
-        pa = signal.convolve(Ka, S ** self.a, 'same')
-
-        sigma = 1e-16
-        alpha = self.a
-        if alpha == 1:
-            alpha = sigma
-
-        return np.log(pa / (psi ** alpha + sigma) + sigma) / (1 - alpha)
-    
-    def convolve3HRE(self):
-        self.vprint(1, "Weighing...")
-        if self.weight_func is None:
-            base_weights = 1 / np.sqrt(np.prod(self.basis_triad_set, axis=1))
-        else:
-            base_weights = 1 / self.weight_func(self.basis_triad_set)
-
-        K = np.zeros(shape=(self.x_length, self.x_length))
-        np.add.at(K, self.basis_triad_xy, base_weights)
+            s_range = np.round(self.s * 5)
+            axis = np.arange(-s_range, s_range, 1)
+            if not self.he3:
+                self.basis_spread = np.exp(-(axis**2) * self.i_ss2)
+            else:
+                x, y = np.meshgrid(axis, axis)
+                self.basis_spread = np.exp(-((x**2 + y**2) * self.i_ss2))
         
-        Ka = np.zeros(shape=(self.x_length, self.x_length))
-        np.add.at(Ka, self.basis_triad_xy, base_weights ** self.a)
+        if self.updateSpread or self.updateAlpha:
+            self.basis_spread_alphas = self.basis_spread ** self.a
 
-        self.vprint(1, "Smoothing...")
-        s_range = round(self.s*5)
-        sx = np.arange(-s_range, s_range, self.res)
-        sy = np.arange(-s_range, s_range, self.res)
-        x, y = np.meshgrid(sx, sy)
-        S = np.exp(-((x**2 + y**2) * self.i_ss2))
+        self.updateSpread = False
 
-        self.vprint(1, "Convolving...")
-        psi = signal.convolve(K, S, mode = 'same')
-        pa = signal.convolve(Ka, S**self.a, mode = 'same')
+    def _do_convolve(self):
+        self._vprint(1, "Convolving...")
+
+        psi = signal.convolve(self.basis_distribution, self.basis_spread, 'same')
+        pa = signal.convolve(self.basis_distribution_alpha, self.basis_spread_alphas, 'same')
 
         sigma = 1e-16
         alpha = self.a
         if alpha == 1:
             alpha = sigma
 
-        entropy = np.log((pa + sigma) / ((psi ** alpha) + sigma)) / (1 - alpha)
-
-        self.vprint(1, "Masking...")
-        # clean up
+        return np.log((pa + sigma) / ((psi ** alpha) + sigma)) / (1 - alpha)
+    
+    def _prepare_entropy_mask(self):
+        self._vprint(1, "Preparing mask...")
         gx = np.arange(0, self.x_length, 1)
         gy = np.arange(0, self.x_length, 1)
         mx, my = np.meshgrid(gx, gy)
 
-        mask = mx - my / np.sqrt(3) > 0
-        mask &= self.x_length - mx - my / np.sqrt(3) > 0
-
-        entropy_masked = 7 - entropy
-        entropy_masked[~mask] = 0
-        return entropy_masked
+        self.entropy_mask = mx - my / np.sqrt(3) > 0
+        self.entropy_mask &= self.x_length - mx - my / np.sqrt(3) > 0
         
-    def calculate(self, loadFile=True):
+        self.updateMask = False
+
+    def _mask_triadic_entropy(self, entropy):
+        self._vprint(1, "Masking...")
+
+        masked = 7 - entropy
+        masked[~self.entropy_mask] = 0
+        return masked
+
+    # Quickest way to get the data
+    def getEntropy(self, loadFile=True):
         if self.he3:
             file = os.path.join(os.path.dirname(__file__), "he_data", "3he_{}.npy".format(self.suffix()))
-            if loadFile and os.path.exists(file):
-                self.Entropy = np.load(file)
-            else:
-                self.Entropy = self.convolve3HRE()
-
-            self.recalculate = False
-            return
-
-        file = os.path.join(os.path.dirname(__file__), "he_data", "he_{}.npy".format(self.suffix()))
-        if loadFile and os.path.exists(file):
-            self.Entropy = np.load(file)
         else:
-            self.Entropy = self.convolveHRE()
-        
-        self.recalculate = False
+            file = os.path.join(os.path.dirname(__file__), "he_data", "he_{}.npy".format(self.suffix()))
 
-    def writeEntropy(self):
+        if loadFile and os.path.exists(file): 
+            if self.loadedEntropyFile != file:
+                self.Entropy = np.load(file)
+            return self.Entropy
+        else:
+            return self.calculate()
+
+    def calculate(self):
+        if self.updateX:
+            self._prepare_x_axis()
+        if self.regenBasis:
+            self._generate_basis()
+        if self.he3 and self.updateMask:
+            self._prepare_entropy_mask()
+        if self.updateBasis:
+            self._prepare_basis_periods()
+        if self.updateAlpha:
+            self._weight_basis()
+            self._prepare_spread()
+            self.updateAlpha = False
+        if self.updateWeights:
+            self._weight_basis()
+        if self.updateSpread:
+            self._prepare_spread()
+        if self.updateTransform:
+            self._transform_basis()
+        if self.updateDistribution:
+            self._distribute_basis()
+
+            if not self.he3:
+                self.Entropy = self._do_convolve()
+            else:
+                self.Entropy = self._mask_triadic_entropy(self._do_convolve())
+
+            if self.weight_option == "all" :
+                self.EntropyAltWeights = {}
+                for option in ["lencf", "lenmaxcf", "sumcf"]:
+                    self.setWeightingOption("lencf")
+                    self.EntropyAltWeights[option] = self._do_convolve()
+
+    def saveEntropy(self, filepath=None):
         if self.he3:
             file = os.path.join(os.path.dirname(__file__), "he_data", "3he_{}".format(self.suffix()))
         else:
             file = os.path.join(os.path.dirname(__file__), "he_data", "he_{}".format(self.suffix()))
-        self.vprint(1, f"Writing: {file}")
+        
         np.save(file, self.Entropy)
-        np.savetxt(file+".txt", self.Entropy,  fmt="%f")
+
+        if filepath is None:
+            filepath = file + ".txt"
+
+        self._vprint(1, f"Writing: {filepath}")
+        np.savetxt(filepath, self.Entropy,  fmt="%f")
 
     def getEntropyPlotData(self, min_cents=None, max_cents=None):
         if self.he3:
             pass # todo
             return (self.x_axis, self.Entropy)
 
-        startX = 0
-        endX = self.x_length
-
+        start = 0
         if min_cents is not None:
-            startX = max(0, int(np.round(min_cents / self.res)))
+            start = max(0, int(np.round(min_cents / self.res)))
 
+        end = self.x_length
         if max_cents is not None:
-            endX = min(self.x_length, int(np.round(max_cents / self.res)))
+            end = min(self.x_length, int(np.round(max_cents / self.res)))
 
-        return (self.x_axis[startX:endX], self.Entropy[startX:endX])
+        return (self.x_axis[start:end], self.Entropy[start:end])
 
     def plot(self, save=True):
-        self.vprint(1, "Plotting...")
+        self._vprint(1, "Plotting...")
 
         plot_data = self.Entropy
 
@@ -534,21 +583,23 @@ if __name__ == "__main__":
     parser.add_argument('--plot', action='store_true', help="Display plot")
     parser.add_argument('--ticks', action='store_true', help="Auto-select minima-based x-axis ticks")
     parser.add_argument('--save', action='store_true', help="Save to file")
+    parser.add_argument('--no-save', action='store_true', help="Don't save plot file")
 
     parsed = parser.parse_args()
 
     options = vars(parsed)
-    save = options['save']
+    saveText = options['save']
     del options['save']
     plot = options['plot']
     del options['plot']
+    savePlot = not options['no_save']
 
     heArgs = { k:v for k,v in options.items() if v is not None }
     he = HarmonicEntropy(**heArgs)
     he.calculate()
-    
-    if save:
-        he.writeEntropy()
 
-    if plot or not save:
-        he.plot()
+    if saveText:
+        he.saveEntropy()
+
+    if plot:
+        he.plot(savePlot)
