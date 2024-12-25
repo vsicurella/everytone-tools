@@ -16,7 +16,7 @@ import scipy.signal as signal
 from utils import *
 from basis import *
 
-def show_plot(data, title="Plot", xlabel="X", ylabel="Y", **kwArgs):
+def create_plot(data, title="Plot", xlabel="X", ylabel="Y", **kwArgs):
     default_label = ylabel
     if "label-default" in kwArgs:
         default_label = kwArgs["label-default"]
@@ -61,11 +61,6 @@ def show_plot(data, title="Plot", xlabel="X", ylabel="Y", **kwArgs):
             plt.legend()
             # primary_plot.set_label(kwArgs['label-default'])
 
-    if "filename" in kwArgs:
-        print(1, "Writing: " + kwArgs["filename"])
-        plt.savefig(kwArgs["filename"], dpi=kwArgs["dpi"], pad_inches=0, bbox_inches='tight')
-
-    plt.show()
     return plt
 
 def is_odd(integer):
@@ -95,6 +90,7 @@ class HarmonicEntropy:
 
     kwArgs = None
     verbose = 1
+    output_dir=None
 
     # state
     x_axis = None
@@ -132,6 +128,8 @@ class HarmonicEntropy:
     EntropyAltWeights = None
     entropy_mask = None
 
+    plot = None
+
     # pre-computes
     i_ss2 = None
     ssqrt2pi = None
@@ -148,7 +146,14 @@ class HarmonicEntropy:
         if "weight" in self.kwArgs:
             weight = self.kwArgs["weight"]
 
-        self.update(spread, N, res, limit, alpha, weight)
+        tx = None
+        if "tx" in self.kwArgs:
+            tx = self.kwArgs["tx"]
+
+        if "out" in self.kwArgs:
+            self.output_dir = kwArgs["out"]
+
+        self.update(spread, N, res, limit, alpha, weight, tx)
 
     def _vprint(self, level, str):
         if self.verbose >= level:
@@ -169,10 +174,12 @@ class HarmonicEntropy:
             tokens["max"] = self.limit
         if self.weight_func_name is not None:
             tokens["wt"] = f'{self.weight_func_name}-'
+        if self.basis_transform_option is not None:
+            tokens["tx"] = f'{self.basis_transform_option}-'
 
         return "_".join([ f'{tokens[k]}{k}' for k in tokens ])
 
-    def update(self, s=None, N=None, res=None, limit=None, a=None, weight=None):
+    def update(self, s=None, N=None, res=None, limit=None, a=None, weight=None, tx=None):
         updated = False
         if N is not None:
             updated = updated or self.N != N
@@ -190,6 +197,9 @@ class HarmonicEntropy:
         if weight is not None:
             updated = updated or self.weight_option != weight
             self.setWeightingOption(weight)
+        if tx is not None:
+            updated = updated or self.basis_transform_option != tx
+            self.setTransformOption(tx)
         if a is not None:
             updated = updated or self.a != a
             self.a = a
@@ -257,6 +267,7 @@ class HarmonicEntropy:
 
         self.updateBasis = False
         self.updateWeights = True
+        self.updateTransform = True
         if self.basis_distribution is None:
             newShape = self.x_length
             if self.he3:
@@ -273,16 +284,15 @@ class HarmonicEntropy:
 
         if self.he3:
             self.basis_cents = np.extract(mask, self.basis_cents)
-            self.basis_triad_x = np.extract(mask, self.basis_triad_x)
-            self.basis_triad_y = np.extract(mask, self.basis_triad_y)
-            self.basis_transform = (self.basis_triad_x, self.basis_triad_y)
+            self.basis_transform = (np.extract(mask, self.basis_transform[0]), 
+                                    np.extract(mask, self.basis_transform[1]))
 
     # def setOddBasis(self):
     #     mask = self.basis_periods[:, 0] & self.basis_periods[:, 1] & 1
     #     self.setBasisMask(mask)
 
     def setWeightingOption(self, option, **kwArgs):
-        if option != 'custom' and option == option:
+        if option != 'custom' and option == self.weight_option:
             return
         weigh = None
         name = None
@@ -333,6 +343,52 @@ class HarmonicEntropy:
 
         self.updateWeights = False
         self.updateDistribution = True
+
+    def setTransformOption(self, option, **kwArgs):
+        if option != 'custom' and option == self.basis_transform_option:
+            return
+        tx = None
+        name = None
+        self.updateTransform = True
+
+        if option == 'default':
+            pass
+        elif option == 'linear' or option == 'lin':
+            if self.he3:
+                def linHe3Tx(periods):
+                    indexes = np.rint((periods[:,1:] / periods[:,:-1] - 1) / self.period_harmonic * (self.x_length - 1))
+                    tx = np.rint((indexes[:,0] + (indexes[:,1] / 2)) / self.res).astype(np.uint32)
+                    ty = np.rint(indexes[:,1] * self.tri_y_scalar / self.res).astype(np.uint32)
+                    return (tx, ty)
+                tx = linHe3Tx
+            else:
+                tx = lambda periods: np.rint(((periods[:,1] / periods[:,0]) - 1) / self.period_harmonic * (self.x_length-1)).astype(np.uint32)
+            pass
+        elif option == 'polar':
+            if self.he3:
+                def polHe3Tx(periods):
+                    # norm = (periods[:,1:] / periods[:,:-1] - 1) / self.period_harmonic * 2 # ?
+                    norm = nd_basis_to_cents(periods) / self.limit
+                    wrap = self.period_harmonic * np.pi * 2
+                    theta = norm[:,0] * wrap
+                    radscale = 2
+                    rad = (((norm[:,1] + 1) ** radscale) / (2**radscale) - 1)
+                    x = np.rint((rad * np.cos(theta) + 1) * 0.5 * (self.x_length - 1)).astype(np.uint32)
+                    y = np.rint((rad * np.sin(theta) + 1) * 0.5 * (self.x_length - 1)).astype(np.uint32)
+                    return (x, y)
+                tx = polHe3Tx
+            else:
+                pass
+            #     tx_cents = lambda cents: cos
+            #     tx = lambda periods: nd_basis_to_cents(periods)
+
+        else:
+            self.basis_transform_func = None
+            self.basis_transform_option = None
+            raise Exception("Unknown basis transfer option: " + option)
+
+        self.basis_transform_func = tx
+        self.basis_transform_option = option
 
     def _transform_basis(self):
         self._vprint(1, 'Transforming basis...')
@@ -418,7 +474,9 @@ class HarmonicEntropy:
 
     def _mask_triadic_entropy(self, entropy):
         self._vprint(1, "Masking...")
-
+        if self.basis_transform_func is not None:
+            self._vprint(1, "skipping mask") # todo
+            return entropy
         masked = 7 - entropy
         masked[~self.entropy_mask] = 0
         return masked
@@ -499,7 +557,7 @@ class HarmonicEntropy:
 
         return (self.x_axis[start:end], self.Entropy[start:end])
 
-    def plot(self, save=True):
+    def makePlot(self, save=True, show=True, **hePlotArgs):
         self._vprint(1, "Plotting...")
 
         plot_data = self.Entropy
@@ -550,24 +608,51 @@ class HarmonicEntropy:
 
         plotArgs["annotate"] = annotation
 
-        if save:
-            filename = os.path.join("he_plots", f'3he_{self.suffix()}')
-            plotArgs["filename"] = getUniqueFilename(filename, "png")
-            plotArgs["dpi"] = 480
-
         if self.he3:
             plotArgs["imshow"]=True
             plotArgs["figsize"]=(16,16)
             plotArgs["cmap"]="inferno"
 
-        self.plotted = True
+        if self.plot:
+            self.plot.close()
 
-        return show_plot(plot_data, 
+        self.plot = create_plot(plot_data, 
                   title, 
                   "Dyad (cents)", 
                   "Dissonance",
                   **plotArgs
                   )
+        
+        if save:
+            outdir = "he_plots"
+            basename = None
+            if self.output_dir:
+                (outdir, basename) = os.path.split(os.path.abspath(self.output_dir))
+                if not os.path.exists(outdir):
+                    os.makedirs(outdir)
+            if "filename" in hePlotArgs:
+                filename = os.path.join(outdir, hePlotArgs["filename"])
+            else:
+                # auto name that doesn't overwrite files
+                if basename:
+                    filename = basename
+                else:
+                    filename = '{}he_{}'.format(3 if self.he3 else "", self.suffix())
+                filename = os.path.join(outdir, filename)
+                filename = getUniqueFilename(filename, "png")
+
+            if "dpi" in self.kwArgs:
+                dpi = int(self.kwArgs["dpi"])
+            else:
+                dpi = 480
+            self._vprint(1, "Writing: " + filename)
+            self.plot.savefig(filename, dpi=dpi, pad_inches=0, bbox_inches='tight')
+
+        if show:
+            self.plot.show()
+
+        return self.plot
+
 
 
 if __name__ == "__main__": 
@@ -578,20 +663,26 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--res', type=float, help="Resolution of x-axis in cents")
     parser.add_argument('-l', '--limit', type=float, help="Last cents value to calculate")
     parser.add_argument('-w', '--weight', choices=['default', 'sqrtnd', 'lencf', 'lenmaxcf', 'sumcf', 'all'])
+    parser.add_argument('-t', '--tx', choices=['default', 'lin', 'polar'])
     parser.add_argument('--he3', action='store_true', help='3HE mode')
     parser.add_argument('--plot', action='store_true', help="Display plot")
     parser.add_argument('--ticks', action='store_true', help="Auto-select minima-based x-axis ticks")
     parser.add_argument('--save', action='store_true', help="Save to file")
     parser.add_argument('--no-save', action='store_true', help="Don't save plot file")
+    parser.add_argument('--out', type=str, help='Plot output path')
 
     parsed = parser.parse_args()
 
     options = vars(parsed)
     saveText = options['save']
+    if not saveText:
+        savePlot = not options['no_save']
+    else:
+        savePlot = True
+
     del options['save']
     plot = options['plot']
     del options['plot']
-    savePlot = not options['no_save']
 
     heArgs = { k:v for k,v in options.items() if v is not None }
     he = HarmonicEntropy(**heArgs)
@@ -601,4 +692,4 @@ if __name__ == "__main__":
         he.saveEntropy()
 
     if plot:
-        he.plot(savePlot)
+        he.makePlot(savePlot)
