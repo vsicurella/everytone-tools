@@ -25,7 +25,8 @@ def create_plot(data, title="Plot", xlabel="X", ylabel="Y", **kwArgs):
         cmap = None if "cmap" not in kwArgs else kwArgs["cmap"]
         if "figsize" in kwArgs:
             plt.figure(figsize=kwArgs["figsize"])
-        plt.imshow(data, cmap=cmap, aspect="equal", origin="lower")
+        origin = "lower" if "origin" not in kwArgs else kwArgs["origin"]
+        plt.imshow(data, cmap=cmap, aspect="equal", origin=origin)
         plt.axis('off')
     else:
         plt.plot(data, label=default_label)
@@ -63,11 +64,6 @@ def create_plot(data, title="Plot", xlabel="X", ylabel="Y", **kwArgs):
 
     return plt
 
-def is_odd(integer):
-    return integer & 1
-
-def ratio_has_evens(ndRatio):
-    return not (ndRatio[0] & ndRatio[1] & 1)
 
 
 class HarmonicEntropy:
@@ -83,6 +79,8 @@ class HarmonicEntropy:
 
     basis_transform_func = None
     basis_transform_option = None
+    entropy_mask_fnc = None
+    entropy_mask = None
 
     weight_func = None
     weight_func_name = None
@@ -126,7 +124,6 @@ class HarmonicEntropy:
 
     Entropy = None
     EntropyAltWeights = None
-    entropy_mask = None
 
     plot = None
 
@@ -149,6 +146,8 @@ class HarmonicEntropy:
         tx = None
         if "tx" in self.kwArgs:
             tx = self.kwArgs["tx"]
+        else:
+            self.setTransformOption("default")
 
         if "out" in self.kwArgs:
             self.output_dir = kwArgs["out"]
@@ -344,15 +343,25 @@ class HarmonicEntropy:
         self.updateWeights = False
         self.updateDistribution = True
 
+    def _get_mask_mesh(self):
+        return np.meshgrid(np.arange(0, self.x_length, 1), np.arange(0, self.x_length, 1))
+        
     def setTransformOption(self, option, **kwArgs):
         if option != 'custom' and option == self.basis_transform_option:
             return
         tx = None
         name = None
+        mask_fnc = None
         self.updateTransform = True
 
         if option == 'default':
-            pass
+            if self.he3:
+                def create_mask():
+                    mx, my = self._get_mask_mesh()
+                    my_sqrt3 = my / np.sqrt(3)
+                    return (mx - my_sqrt3 > 0) & (self.x_length - mx - my_sqrt3 > 0)
+                mask_fnc = create_mask
+                
         elif option == 'linear' or option == 'lin':
             if self.he3:
                 def linHe3Tx(periods):
@@ -366,29 +375,46 @@ class HarmonicEntropy:
             pass
         elif option == 'polar':
             if self.he3:
+                ## map one dyad to angle, the other to radius
                 def polHe3Tx(periods):
-                    # norm = (periods[:,1:] / periods[:,:-1] - 1) / self.period_harmonic * 2 # ?
                     norm = nd_basis_to_cents(periods) / self.limit
-                    wrap = self.period_harmonic * np.pi * 2
-                    theta = norm[:,0] * wrap
-                    radscale = 2
-                    rad = (((norm[:,1] + 1) ** radscale) / (2**radscale) - 1)
+                    theta = norm[:,0] * np.pi * self.period_harmonic
+                    radOrder = 1 if "polar-rad-order" not in kwArgs else kwArgs["polar-rad-order"]
+                    rad = ((norm[:,1] + 1) ** radOrder - 1) / (2**radOrder - 1)
                     x = np.rint((rad * np.cos(theta) + 1) * 0.5 * (self.x_length - 1)).astype(np.uint32)
                     y = np.rint((rad * np.sin(theta) + 1) * 0.5 * (self.x_length - 1)).astype(np.uint32)
                     return (x, y)
                 tx = polHe3Tx
+                # def polHe3Mask():
+                #     mx,my = self._get_mask_mesh()
+
             else:
                 pass
-            #     tx_cents = lambda cents: cos
-            #     tx = lambda periods: nd_basis_to_cents(periods)
-
+        elif option == 'odd-split' and self.he3:
+            # first set of dyads on a vertical line down the middle
+            # next one look at the integer and check if its even or odd go either left or right
+            def oddSplitTx(periods):
+                norm = nd_basis_to_cents(periods) / self.limit
+                d2_dist = norm[:, 1] * (self.x_length - 1)
+                sign = np.power(-1, (periods[:,2] & 1))
+                x = np.rint((d2_dist * sign + self.x_length) * 0.5).astype(np.uint32)
+                y =  np.rint(norm[:, 0] * (self.x_length - 1) + d2_dist).astype(np.uint32)
+                return (x, y)
+            tx = oddSplitTx
+            def oddSplitMask():
+                mx, my = self._get_mask_mesh()
+                return abs(0.5 * self.x_length - my) <= abs(mx * 0.5)
+                
+            mask_fnc = oddSplitMask
         else:
             self.basis_transform_func = None
             self.basis_transform_option = None
+            self.entropy_mask_fnc = None
             raise Exception("Unknown basis transfer option: " + option)
 
         self.basis_transform_func = tx
         self.basis_transform_option = option
+        self.entropy_mask_fnc = mask_fnc
 
     def _transform_basis(self):
         self._vprint(1, 'Transforming basis...')
@@ -462,24 +488,19 @@ class HarmonicEntropy:
         return np.log((pa + sigma) / ((psi ** alpha) + sigma)) / (1 - alpha)
     
     def _prepare_entropy_mask(self):
-        self._vprint(1, "Preparing mask...")
-        gx = np.arange(0, self.x_length, 1)
-        gy = np.arange(0, self.x_length, 1)
-        mx, my = np.meshgrid(gx, gy)
-
-        self.entropy_mask = mx - my / np.sqrt(3) > 0
-        self.entropy_mask &= self.x_length - mx - my / np.sqrt(3) > 0
-        
+        if self.entropy_mask_fnc is not None:
+            self._vprint(1, "Preparing mask...")
+            self.entropy_mask = self.entropy_mask_fnc()
         self.updateMask = False
 
     def _mask_triadic_entropy(self, entropy):
-        self._vprint(1, "Masking...")
-        if self.basis_transform_func is not None:
-            self._vprint(1, "skipping mask") # todo
-            return entropy
-        masked = 7 - entropy
-        masked[~self.entropy_mask] = 0
-        return masked
+        if self.entropy_mask is not None:
+            self._vprint(1, "Masking...")
+            masked = 7 - entropy
+            masked[~self.entropy_mask] = 0
+            return masked
+        self._vprint(1, "No mask...")
+        return 7 - entropy
 
     # Quickest way to get the data
     def getEntropy(self, loadFile=True):
@@ -500,8 +521,6 @@ class HarmonicEntropy:
             self._prepare_x_axis()
         if self.regenBasis:
             self._generate_basis()
-        if self.he3 and self.updateMask:
-            self._prepare_entropy_mask()
         if self.updateBasis:
             self._prepare_basis_periods()
         if self.updateAlpha:
@@ -514,9 +533,10 @@ class HarmonicEntropy:
             self._prepare_spread()
         if self.updateTransform:
             self._transform_basis()
+        if self.he3 and self.updateMask:
+            self._prepare_entropy_mask()
         if self.updateDistribution:
             self._distribute_basis()
-
             if not self.he3:
                 self.Entropy = self._do_convolve()
             else:
@@ -645,6 +665,7 @@ class HarmonicEntropy:
                 dpi = int(self.kwArgs["dpi"])
             else:
                 dpi = 480
+
             self._vprint(1, "Writing: " + filename)
             self.plot.savefig(filename, dpi=dpi, pad_inches=0, bbox_inches='tight')
 
@@ -663,13 +684,14 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--res', type=float, help="Resolution of x-axis in cents")
     parser.add_argument('-l', '--limit', type=float, help="Last cents value to calculate")
     parser.add_argument('-w', '--weight', choices=['default', 'sqrtnd', 'lencf', 'lenmaxcf', 'sumcf', 'all'])
-    parser.add_argument('-t', '--tx', choices=['default', 'lin', 'polar'])
+    parser.add_argument('-t', '--tx', choices=['default', 'lin', 'polar', 'odd-split'])
     parser.add_argument('--he3', action='store_true', help='3HE mode')
     parser.add_argument('--plot', action='store_true', help="Display plot")
     parser.add_argument('--ticks', action='store_true', help="Auto-select minima-based x-axis ticks")
     parser.add_argument('--save', action='store_true', help="Save to file")
     parser.add_argument('--no-save', action='store_true', help="Don't save plot file")
     parser.add_argument('--out', type=str, help='Plot output path')
+    parser.add_argument('--dpi', type=int, help='Plot output DPI')
 
     parsed = parser.parse_args()
 
