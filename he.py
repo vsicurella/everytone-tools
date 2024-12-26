@@ -512,9 +512,10 @@ class HarmonicEntropy:
         if loadFile and os.path.exists(file): 
             if self.loadedEntropyFile != file:
                 self.Entropy = np.load(file)
-            return self.Entropy
+                self.loadedEntropyFile = file
         else:
             return self.calculate()
+        return self.Entropy
 
     def calculate(self):
         if self.updateX:
