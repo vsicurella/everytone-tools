@@ -10,6 +10,7 @@ import numpy as np
 from math import gcd
 import numpy as np
 import utils
+from primes import *
 
 try:
     _c_farey_path=os.path.abspath('./c_farey/farey.so')
@@ -118,7 +119,61 @@ def get_triplet_basis(N, harmonic_limit=2, product_limit=27_000_000):
 def nd_basis_to_cents(nd_periods):
     to_cents = np.vectorize(utils.ratio_to_cents)
     cents = to_cents(nd_periods[:,1:] / nd_periods[:,:-1])
-    return cents
+    return cents.squeeze()
+
+def create_mask_from_lambdas(basis_set, *funcs):
+    def composite(*args):
+        result = funcs[0](args[0])
+        for f in funcs[1:]:
+            result &= f(basis_set)
+        return result
+    return composite(basis_set)
+
+# Test for integer set including all of these primes
+def create_exact_prime_test(primes):
+    def test(basis_set, primes):
+        def check(n):
+            factor_list = get_prime_list(n)
+            for p in primes:
+                if p in factor_list:
+                    return True
+            return False
+        return np.apply_along_axis(lambda row: np.all(np.vectorize(check)(row)), 1, basis_set)
+    return lambda basis: test(basis, primes)
+
+# Test for integer set not including any of these primes
+def create_exclusive_prime_test(primes):
+    def test(basis_set, primes):
+        def check(n):
+            factor_list = get_prime_list(n)
+            for p in primes:
+                if p in factor_list:
+                    return False
+            return True
+        return np.apply_along_axis(lambda row: np.all(np.vectorize(check)(row)), 1, basis_set)
+    return lambda basis: test(basis, primes)
+
+# Test for integer set including one or more of these primes
+def create_includes_prime_test(primes):
+    def check(n):
+        factor_list = get_prime_list(n)
+        for p in primes:
+            if p in factor_list:
+                return False
+        return True
+    return np.apply_along_axis(lambda row: np.any(np.vectorize(check)(row)), 1, basis_set)
+
+def create_is_prime_test():
+    def test(basis_set):
+        def check(n):
+            for p in PRIMES:
+                if n == p:
+                    return True
+                if n > p:
+                    return False
+            return False
+        return np.apply_along_axis(lambda row: np.all(np.vectorize(check)(row)), 1, basis_set)
+    return test
 
 if __name__ == '__main__':
     N = 10

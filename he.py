@@ -75,7 +75,10 @@ class HarmonicEntropy:
 
     he3 = False
 
-    basis_filter = None
+    basis_mask = None
+    basis_mask_func = None
+    basis_mask_name = None
+    basis_mask_option = None
 
     basis_transform_func = None
     basis_transform_option = None
@@ -132,27 +135,48 @@ class HarmonicEntropy:
     ssqrt2pi = None
     tri_y_scalar = np.sqrt(3) / 2
 
-    def __init__(self, spread=17, N=1000, res=1, limit=2400, alpha=8, he3=False, **kwArgs):
-        self.he3 = he3
-        self.kwArgs = kwArgs
+    # constants
+    BASIS_MASK_OPTIONS = ["pl", "pr", "odd", "primes", "composites"]
+
+
+    def __init__(self, spread=15, N=100, res=1, limit=2400, alpha=7, he3=False, **kwArgs):
         
+        # Global Params
+        self.kwArgs = kwArgs
+
         if "verbose" in self.kwArgs:
             self.verbose = int(self.kwArgs["verbose"])
-
-        weight = None
-        if "weight" in self.kwArgs:
-            weight = self.kwArgs["weight"]
-
-        tx = None
-        if "tx" in self.kwArgs:
-            tx = self.kwArgs["tx"]
-        else:
-            self.setTransformOption("default")
-
+        
         if "out" in self.kwArgs:
             self.output_dir = kwArgs["out"]
 
-        self.update(spread, N, res, limit, alpha, weight, tx)
+        # Model Parameters
+        args = { 
+            "N": N,
+            "limit": limit,
+            "res": res,
+            "s": spread,
+            "a": alpha,
+            }
+
+        self.he3 = he3 
+
+        if "weight" in self.kwArgs:
+            args["weight"] = self.kwArgs["weight"]
+
+        if "tx" in self.kwArgs:
+            args["tx"] = self.kwArgs["tx"]
+        else:
+            self.setTransformOption("default")
+
+        for option in self.BASIS_MASK_OPTIONS:
+            if option in self.kwArgs:
+                args[option] = True
+                break
+
+        self._vprint(2, f"args: {args}")
+        self.update(args)
+
 
     def _vprint(self, level, str):
         if self.verbose >= level:
@@ -163,9 +187,12 @@ class HarmonicEntropy:
         if self.he3:
             tokens["he3"] = ""
         
-        tokens["s"] = self.s
-        tokens["a"] = self.a
-        tokens["N"] = self.N
+        tokens["s"] = str(self.s)
+        tokens["a"] = str(self.a)
+        tokens["N"] = str(self.N)
+
+        if self.basis_mask_name is not None:
+            tokens["N"] += '-' + self.basis_mask_name
 
         if self.res != 1:
             tokens["c"] = self.res
@@ -178,35 +205,41 @@ class HarmonicEntropy:
 
         return "_".join([ f'{tokens[k]}{k}' for k in tokens ])
 
-    def update(self, s=None, N=None, res=None, limit=None, a=None, weight=None, tx=None):
+    def update(self, args):
         updated = False
-        if N is not None:
-            updated = updated or self.N != N
-            self.N = N
-            self.regenBasis = True
-        if res is not None:
-            updated = updated or self.res != res
-            self.res = res
-            self.updateX = True
-        if limit is not None:
-            updated = updated or self.limit != limit
-            self.limit = limit
-            self.updateX = True
-            self.regenBasis = True
-        if weight is not None:
-            updated = updated or self.weight_option != weight
-            self.setWeightingOption(weight)
-        if tx is not None:
-            updated = updated or self.basis_transform_option != tx
-            self.setTransformOption(tx)
-        if a is not None:
-            updated = updated or self.a != a
-            self.a = a
-            self.updateAlpha = True
-        if s is not None:
-            updated = updated or self.s != s
-            self.s = s
-            self.updateSpread = True
+        for kw in args: # if needed, map callbacks to dict to eliminate conditions
+            value = args[kw]
+            if kw == "N":
+                updated = updated or self.N != value
+                self.N = args["N"]
+                self.regenBasis = True
+            elif kw == "res":
+                updated = updated or self.res != value
+                self.res = args["res"]
+                self.updateX = True
+            elif kw == "limit":
+                updated = updated or self.limit != value
+                self.limit = args["limit"]
+                self.updateX = True
+                self.regenBasis = True
+            elif kw == "weight":
+                updated = updated or self.weight_option != value
+                self.setWeightingOption(value)
+            elif kw == "tx":
+                updated = updated or self.basis_transform_option != value
+                self.setTransformOption(value)
+            elif kw == "a":
+                updated = updated or self.a != value
+                self.a = value
+                self.updateAlpha = True
+            elif kw == "s":
+                updated = updated or self.s != value
+                self.s = value
+                self.updateSpread = True
+            elif kw in self.BASIS_MASK_OPTIONS:
+                if self.basis_mask_option != kw:
+                    updated = True
+                    self.setBasisMaskOption(kw)
 
         return updated
     
@@ -255,14 +288,15 @@ class HarmonicEntropy:
         self.updateBasis = True
 
     def _prepare_basis_periods(self):
-        if not self.he3:
-            self.basis_periods  = farey_set_to_basis(self.basis_set, self.period_harmonic)
-            self.basis_length   = self.basis_periods.shape[0]
-            self.basis_cents    = nd_basis_to_cents(self.basis_periods).ravel()
+        self._vprint(1, f"Preparing basis...")
+
+        if self.he3:
+            self.basis_periods = np.asarray(self.basis_set).copy()
         else:
-            self._vprint(1, f"Preparing basis...")
-            self.basis_periods = np.asarray(self.basis_set)
-            self.basis_length = self.basis_periods.shape[0]
+            self.basis_periods  = farey_set_to_basis(self.basis_set, self.period_harmonic)
+
+        self.basis_length = self.basis_periods.shape[0]
+        self.basis_cents = nd_basis_to_cents(self.basis_periods)
 
         self.updateBasis = False
         self.updateWeights = True
@@ -274,21 +308,53 @@ class HarmonicEntropy:
             self.basis_distribution = np.zeros(newShape)
             self.basis_distribution_alpha = np.zeros(newShape)
 
-    def setBasisMask(self, mask):
-        basis_n = np.extract(mask, self.basis_periods[:,0])
-        basis_d = np.extract(mask, self.basis_periods[:,1])
-        self.basis_periods  = np.column_stack((basis_n, basis_d))
-        self.basis_cents    = np.extract(mask, self.basis_cents)
-        self.basis_length   = len(self.basis_cents)
+    def setBasisMask(self, mask, reprepare=True):
+        if mask is None or reprepare:
+            self._prepare_basis_periods()
 
-        if self.he3:
-            self.basis_cents = np.extract(mask, self.basis_cents)
-            self.basis_transform = (np.extract(mask, self.basis_transform[0]), 
-                                    np.extract(mask, self.basis_transform[1]))
+        if mask is not None:
+            self.basis_periods  = np.compress(mask, self.basis_periods, 0)
+            self.basis_length   = self.basis_periods.shape[0]
+            self.basis_cents    = np.compress(mask, self.basis_cents, 0)
 
-    # def setOddBasis(self):
-    #     mask = self.basis_periods[:, 0] & self.basis_periods[:, 1] & 1
-    #     self.setBasisMask(mask)
+        self.basis_mask = mask
+
+        self.updateWeights = True
+        self.updateTransform = True
+
+    def createBasisMask(self, basisTest, reprepare=True):
+        if self.updateX:
+            self._prepare_x_axis()
+        if self.regenBasis:
+            self._generate_basis()
+        if self.updateBasis or reprepare:
+            self._prepare_basis_periods()
+        self._vprint(1, "Masking basis set...")
+        return create_mask_from_lambdas(self.basis_periods, basisTest)
+
+    def setBasisMaskOption(self, option, reprepare=True):
+        mask_func = None
+        name = None
+
+        if option == "default" or option == "all" or option is None:
+            pass
+        elif option == "odd":
+            name = "Odds"
+            mask_func = create_exclusive_prime_test([2])
+        elif option == "composites":
+            name = "Composites"
+            primeTest = create_is_prime_test()
+            mask_func = lambda basis: ~primeTest(basis)
+        elif option == "primes":
+            name = "StrictPrimes"
+            mask_func = create_is_prime_test()
+        else:
+            raise Exception("Unknown basis mask option")
+            
+        self.basis_mask_name = name
+        self.basis_mask_func = mask_func
+        self.basis_mask = self.createBasisMask(self.basis_mask_func, reprepare)
+        self.setBasisMask(self.basis_mask, False)
 
     def setWeightingOption(self, option, **kwArgs):
         if option != 'custom' and option == self.weight_option:
@@ -377,7 +443,7 @@ class HarmonicEntropy:
             if self.he3:
                 ## map one dyad to angle, the other to radius
                 def polHe3Tx(periods):
-                    norm = nd_basis_to_cents(periods) / self.limit
+                    norm = self.basis_cents / self.limit
                     theta = norm[:,0] * np.pi * self.period_harmonic
                     radOrder = 1 if "polar-rad-order" not in kwArgs else kwArgs["polar-rad-order"]
                     rad = ((norm[:,1] + 1) ** radOrder - 1) / (2**radOrder - 1)
@@ -394,7 +460,7 @@ class HarmonicEntropy:
             # first set of dyads on a vertical line down the middle
             # next one look at the integer and check if its even or odd go either left or right
             def oddSplitTx(periods):
-                norm = nd_basis_to_cents(periods) / self.limit
+                norm = self.basis_cents / self.limit
                 d2_dist = norm[:, 1] * (self.x_length - 1)
                 sign = np.power(-1, (periods[:,2] & 1))
                 x = np.rint((d2_dist * sign + self.x_length) * 0.5).astype(np.uint32)
@@ -420,7 +486,6 @@ class HarmonicEntropy:
         self._vprint(1, 'Transforming basis...')
         if self.basis_transform_func is None:
             if self.he3:
-                self.basis_cents = nd_basis_to_cents(self.basis_periods)
                 self.basis_triad_x = np.round((self.basis_cents[:,0] + (self.basis_cents[:,1] / 2)) / self.res).astype(np.int64)
                 self.basis_triad_y = np.round(self.basis_cents[:,1] * self.tri_y_scalar / self.res).astype(np.int64)
                 self.basis_transform = (self.basis_triad_y, self.basis_triad_x)
@@ -679,13 +744,21 @@ class HarmonicEntropy:
 
 if __name__ == "__main__": 
     parser = argparse.ArgumentParser("harmonicentro.py")
-    parser.add_argument('-n', '--N', type=int, help="Exclusive limit of basis set ratio denominators", default=1000)
+    parser.add_argument('-n', '--N', type=int, help="Exclusive limit of basis set ratio denominators")
     parser.add_argument('-s', '--spread',type=float, help="Bandwidth of spreading function in cents")
-    parser.add_argument('-a', '--alpha', type=float, help="Order of weight scaling", default=3)
+    parser.add_argument('-a', '--alpha', type=float, help="Order of weight scaling")
     parser.add_argument('-r', '--res', type=float, help="Resolution of x-axis in cents")
     parser.add_argument('-l', '--limit', type=float, help="Last cents value to calculate")
+
     parser.add_argument('-w', '--weight', choices=['default', 'sqrtnd', 'lencf', 'lenmaxcf', 'sumcf', 'all'])
     parser.add_argument('-t', '--tx', choices=['default', 'lin', 'polar', 'odd-split'])
+
+    parser.add_argument('--pl', type=str, help='Comma-separated list of primes to limit by')
+    parser.add_argument('--pr', type=str, help='Comma-separated list of primes to reject')
+    parser.add_argument('--odd', action='store_true', help='Only include odd-numbered rationals (shortcut for --pr 2)')
+    parser.add_argument('--primes', action='store_true', help='Only include strict prime rationals')
+    parser.add_argument('--composites', action='store_true', help='Only include strictly composite rationals')
+
     parser.add_argument('--he3', action='store_true', help='3HE mode')
     parser.add_argument('--plot', action='store_true', help="Display plot")
     parser.add_argument('--ticks', action='store_true', help="Auto-select minima-based x-axis ticks")
@@ -693,6 +766,8 @@ if __name__ == "__main__":
     parser.add_argument('--no-save', action='store_true', help="Don't save plot file")
     parser.add_argument('--out', type=str, help='Plot output path')
     parser.add_argument('--dpi', type=int, help='Plot output DPI')
+
+    parser.add_argument('--verbose', type=int, help='Print level')
 
     parsed = parser.parse_args()
 
