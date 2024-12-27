@@ -67,80 +67,87 @@ def create_plot(data, title="Plot", xlabel="X", ylabel="Y", **kwArgs):
 
 
 class HarmonicEntropy:
-    s = None
-    N = None
-    res = None
-    limit = None
-    a = None
-
-    he3 = False
-
-    basis_mask = None
-    basis_mask_func = None
-    basis_mask_name = None
-    basis_mask_option = None
-
-    basis_transform_func = None
-    basis_transform_option = None
-    entropy_mask_fnc = None
-    entropy_mask = None
-
-    weight_func = None
-    weight_func_name = None
-    weight_option = None
-
-    kwArgs = None
-    verbose = 1
-    output_dir=None
-
-    # state
-    x_axis = None
-    x_length = None
-
-    period_harmonic = None
-    basis_set = None
-    basis_periods = None
-    basis_length = None
-
-    basis_ratios = None
-    basis_cents = None
     
-    basis_weights = None
-    basis_weight_alphas = None
-    basis_transform = None
-    basis_distribution = None
-    basis_distribution_alpha = None
-    basis_spread = None
-    basis_spread_alphas = None
+    BASIS_MASK_OPTIONS = ["odd", "primes", "composites"]
+    BASIS_TRANSFORM_OPTIONS = ['lin', 'polar', 'odd-split']
+    
+    def __init_members__(self):
+        self.s = None
+        self.N = None
+        self.res = None
+        self.limit = None
+        self.a = None
 
-    updateX = None
-    regenBasis = None
-    updateBasis = None
-    updateWeights = None
-    updateTransform = None
-    updateDistribution = None
-    updateSpread = None
-    updateAlpha = None
-    updateMask = None
+        self.he3 = False
 
-    loadedEntropyFile = None
+        self.basis_mask = None
+        self.basis_mask_func = None
+        self.basis_mask_name = None
+        self.basis_mask_option = None
 
-    Entropy = None
-    EntropyAltWeights = None
+        self.basis_transform_func = None
+        self.basis_transform_option = None
+        self.entropy_mask_fnc = None
+        self.entropy_mask = None
 
-    plot = None
+        self.weight_func = None
+        self.weight_func_name = None
+        self.weight_option = None
 
-    # pre-computes
-    i_ss2 = None
-    ssqrt2pi = None
-    tri_y_scalar = np.sqrt(3) / 2
+        self.ypad = 0
 
-    # constants
-    BASIS_MASK_OPTIONS = ["pl", "pr", "odd", "primes", "composites"]
+        self.kwArgs = None
+        self.verbose = 1
+        self.output_dir=None
 
+        # state
+        self.x_axis = None
+        self.x_length = None
+
+        self.period_harmonic = None
+        self.basis_set = None
+        self.basis_periods = None
+        self.basis_length = None
+
+        self.basis_ratios = None
+        self.basis_cents = None
+        
+        self.basis_weights = None
+        self.basis_weight_alphas = None
+        self.basis_transform = None
+        self.basis_distribution = None
+        self.basis_distribution_alpha = None
+        self.basis_spread = None
+        self.basis_spread_alphas = None
+
+        self.updateX = None
+        self.regenBasis = None
+        self.updateBasis = None
+        self.updateWeights = None
+        self.updateTransform = None
+        self.updateDistribution = None
+        self.updateSpread = None
+        self.updateAlpha = None
+        self.updateEntropyMask = None
+        self.updateEntropy = None
+        self.applyEntropyMask = None
+
+        self.loadedEntropyFile = None
+
+        self.Entropy = None
+        self.EntropyPreMask = None
+        self.EntropyAltWeights = None
+
+        self.plot = None
+
+        # pre-computes
+        self.i_ss2 = None
+        self.ssqrt2pi = None
+        self.tri_y_scalar = np.sqrt(3) / 2
 
     def __init__(self, spread=15, N=100, res=1, limit=2400, alpha=7, he3=False, **kwArgs):
-        
+        self.__init_members__()
+
         # Global Params
         self.kwArgs = kwArgs
 
@@ -150,13 +157,16 @@ class HarmonicEntropy:
         if "out" in self.kwArgs:
             self.output_dir = kwArgs["out"]
 
+        if "ypad" in self.kwArgs:
+            self.ypad = self.kwArgs["ypad"]
+
         # Model Parameters
         args = { 
             "N": N,
             "limit": limit,
             "res": res,
             "s": spread,
-            "a": alpha,
+            "a": alpha
             }
 
         self.he3 = he3 
@@ -169,10 +179,19 @@ class HarmonicEntropy:
         else:
             self.setTransformOption("default")
 
-        for option in self.BASIS_MASK_OPTIONS:
-            if option in self.kwArgs:
-                args[option] = True
-                break
+        if "p_limit" in self.kwArgs:
+            args["p_limit"] = self.kwArgs["p_limit"]
+        elif "p_group" in self.kwArgs:
+            args["p_group"] = self.kwArgs["p_group"]
+        elif "p_exact" in self.kwArgs:
+            args["p_exact"] = self.kwArgs["p_exact"]
+        elif "p_reject" in self.kwArgs:
+            args["p_reject"] = self.kwArgs["p_reject"]
+        else:
+            for option in self.BASIS_MASK_OPTIONS:
+                if option in self.kwArgs and self.kwArgs[option]:
+                    args[option] = True
+                    break
 
         self._vprint(2, f"args: {args}")
         self.update(args)
@@ -190,10 +209,9 @@ class HarmonicEntropy:
         tokens["s"] = str(self.s)
         tokens["a"] = str(self.a)
         tokens["N"] = str(self.N)
-
+        
         if self.basis_mask_name is not None:
-            tokens["N"] += '-' + self.basis_mask_name
-
+            tokens[self.basis_mask_name] = ""
         if self.res != 1:
             tokens["c"] = self.res
         if self.limit != 1200:
@@ -209,37 +227,65 @@ class HarmonicEntropy:
         updated = False
         for kw in args: # if needed, map callbacks to dict to eliminate conditions
             value = args[kw]
-            if kw == "N":
-                updated = updated or self.N != value
-                self.N = args["N"]
+            if kw == "N" and self.N != value:
+                self._vprint(3, f"Updated {kw}: {value}")
+                updated = True
+                self.N = value
                 self.regenBasis = True
-            elif kw == "res":
-                updated = updated or self.res != value
-                self.res = args["res"]
+            elif kw == "res" and self.res != value:
+                self._vprint(3, f"Updated {kw}: {value}")
+                updated = updated
+                self.res = value
                 self.updateX = True
-            elif kw == "limit":
-                updated = updated or self.limit != value
-                self.limit = args["limit"]
+            elif kw == "limit" and self.limit != value:
+                self._vprint(3, f"Updated {kw}: {value}")
+                updated = True
+                self.limit = value
                 self.updateX = True
                 self.regenBasis = True
-            elif kw == "weight":
-                updated = updated or self.weight_option != value
+            elif kw == "weight" and self.weight_option != value:
+                self._vprint(3, f"Updated {kw}: {value}")
+                updated = True
                 self.setWeightingOption(value)
-            elif kw == "tx":
-                updated = updated or self.basis_transform_option != value
+            elif kw == "tx" and self.basis_transform_option != value:
+                self._vprint(3, f"Updated {kw}: {value}")
+                updated = True
                 self.setTransformOption(value)
-            elif kw == "a":
-                updated = updated or self.a != value
+            elif kw == "a" and self.a != value:
+                self._vprint(3, f"Updated {kw}: {value}")
+                updated = True
                 self.a = value
                 self.updateAlpha = True
-            elif kw == "s":
-                updated = updated or self.s != value
+            elif kw == "s" and self.s != value:
+                self._vprint(3, f"Updated {kw}: {value}")
+                updated = True
                 self.s = value
                 self.updateSpread = True
+            elif kw.startswith("p_"):
+                self._vprint(3, f"Updated {kw}: {value}")
+                mask_test = None
+                name = f'{kw}={value}'
+                if value and name != self.basis_mask_name:
+                    primes = [ int(p) for p in value.split(',') ]
+                    if kw == "p_limit":
+                        mask_test = create_prime_limit_test(primes)
+                    elif kw == "p_group":
+                        mask_test = create_prime_group_test(primes)
+                    elif kw == "p_exact":
+                        mask_test = create_exact_prime_test(primes)
+                    elif kw == "p_reject":
+                        mask_test = create_exclusive_prime_test(primes)
+                    mask = self.createBasisMask(mask_test,)
+                self.setBasisMask(mask, False)
             elif kw in self.BASIS_MASK_OPTIONS:
-                if self.basis_mask_option != kw:
+                self._vprint(3, f"Updated {kw}: {value}")
+                if self.basis_mask_option != kw and self.basis_mask_option != value:
                     updated = True
                     self.setBasisMaskOption(kw)
+            elif kw == "ypad":
+                if value is not None and self.ypad != value:
+                    self.ypad = value
+                    self.applyEntropyMask = True
 
         return updated
     
@@ -252,7 +298,7 @@ class HarmonicEntropy:
         self.updateX = False
         self.updateBasis = True
         self.updateTransform = True
-        self.updateMask = True
+        self.updateEntropyMask = True
 
     def _generate_basis(self):
         if not self.he3:
@@ -313,6 +359,7 @@ class HarmonicEntropy:
             self._prepare_basis_periods()
 
         if mask is not None:
+            self._vprint(1, "Masking basis set...")
             self.basis_periods  = np.compress(mask, self.basis_periods, 0)
             self.basis_length   = self.basis_periods.shape[0]
             self.basis_cents    = np.compress(mask, self.basis_cents, 0)
@@ -322,15 +369,19 @@ class HarmonicEntropy:
         self.updateWeights = True
         self.updateTransform = True
 
-    def createBasisMask(self, basisTest, reprepare=True):
+    def createBasisMask(self, basisTest, maskName=None, reprepare=True):
         if self.updateX:
             self._prepare_x_axis()
         if self.regenBasis:
             self._generate_basis()
         if self.updateBasis or reprepare:
             self._prepare_basis_periods()
-        self._vprint(1, "Masking basis set...")
-        return create_mask_from_lambdas(self.basis_periods, basisTest)
+
+        self.basis_mask_func = basisTest
+        if maskName is not None:
+            self.basis_mask_name = maskName
+        self._vprint(1, "Creating basis set mask...")
+        return create_mask_from_lambdas(self.basis_periods, self.basis_mask_func)
 
     def setBasisMaskOption(self, option, reprepare=True):
         mask_func = None
@@ -351,9 +402,7 @@ class HarmonicEntropy:
         else:
             raise Exception("Unknown basis mask option")
             
-        self.basis_mask_name = name
-        self.basis_mask_func = mask_func
-        self.basis_mask = self.createBasisMask(self.basis_mask_func, reprepare)
+        self.basis_mask = self.createBasisMask(mask_func, name, reprepare)
         self.setBasisMask(self.basis_mask, False)
 
     def setWeightingOption(self, option, **kwArgs):
@@ -456,22 +505,23 @@ class HarmonicEntropy:
 
             else:
                 pass
-        elif option == 'odd-split' and self.he3:
-            # first set of dyads on a vertical line down the middle
-            # next one look at the integer and check if its even or odd go either left or right
-            def oddSplitTx(periods):
-                norm = self.basis_cents / self.limit
-                d2_dist = norm[:, 1] * (self.x_length - 1)
-                sign = np.power(-1, (periods[:,2] & 1))
-                x = np.rint((d2_dist * sign + self.x_length) * 0.5).astype(np.uint32)
-                y =  np.rint(norm[:, 0] * (self.x_length - 1) + d2_dist).astype(np.uint32)
-                return (x, y)
-            tx = oddSplitTx
-            def oddSplitMask():
-                mx, my = self._get_mask_mesh()
-                return abs(0.5 * self.x_length - my) <= abs(mx * 0.5)
-                
-            mask_fnc = oddSplitMask
+        elif option == 'odd-split':
+            if self.he3:
+                # first set of dyads on a vertical line down the middle
+                # next one look at the integer and check if its even or odd go either left or right
+                def oddSplitTx(periods):
+                    norm = self.basis_cents / self.limit
+                    d2_dist = norm[:, 1] * (self.x_length - 1)
+                    sign = np.power(-1, (periods[:,2] & 1))
+                    x = np.rint((d2_dist * sign + self.x_length) * 0.5).astype(np.uint32)
+                    y =  np.rint(norm[:, 0] * (self.x_length - 1) + d2_dist).astype(np.uint32)
+                    return (x, y)
+                tx = oddSplitTx
+                def oddSplitMask():
+                    mx, my = self._get_mask_mesh()
+                    return abs(0.5 * self.x_length - my) <= abs(mx * 0.5)
+                    
+                mask_fnc = oddSplitMask
         else:
             self.basis_transform_func = None
             self.basis_transform_option = None
@@ -481,6 +531,8 @@ class HarmonicEntropy:
         self.basis_transform_func = tx
         self.basis_transform_option = option
         self.entropy_mask_fnc = mask_fnc
+        self.entropy_mask = None
+        self.updateEntropyMask = True
 
     def _transform_basis(self):
         self._vprint(1, 'Transforming basis...')
@@ -520,6 +572,7 @@ class HarmonicEntropy:
         np.add.at(self.basis_distribution_alpha, self.basis_transform, self.basis_weight_alphas)
 
         self.updateDistribution = False
+        self.updateEntropy = True
 
     def _prepare_spread(self):
         if self.updateSpread:
@@ -527,23 +580,33 @@ class HarmonicEntropy:
             # self.ssqrt2pi = self.s * 2.50662827463
 
             s_range = np.round(self.s * 5)
-            axis = np.arange(-s_range, s_range, 1)
+            axis = np.arange(-s_range, s_range, 1).astype(np.float64)
             if not self.he3:
                 self.basis_spread = np.exp(-(axis**2) * self.i_ss2)
             else:
                 x, y = np.meshgrid(axis, axis)
                 self.basis_spread = np.exp(-((x**2 + y**2) * self.i_ss2))
+
+        # hacky overflow fix
+        negmask = np.abs(self.basis_spread) < 1e-16
+        np.putmask(self.basis_spread, negmask, 0)
         
         if self.updateSpread or self.updateAlpha:
             self.basis_spread_alphas = self.basis_spread ** self.a
+            negmask = np.abs(self.basis_spread_alphas) < 1e-16
+            np.putmask(self.basis_spread_alphas, negmask, 0)
 
         self.updateSpread = False
+        self.updateEntropy = True
 
     def _do_convolve(self):
         self._vprint(1, "Convolving...")
 
         psi = signal.convolve(self.basis_distribution, self.basis_spread, 'same')
+        np.putmask(psi, psi < 0, 0)
+
         pa = signal.convolve(self.basis_distribution_alpha, self.basis_spread_alphas, 'same')
+        np.putmask(pa, pa < 0, 0)
 
         sigma = 1e-16
         alpha = self.a
@@ -556,16 +619,18 @@ class HarmonicEntropy:
         if self.entropy_mask_fnc is not None:
             self._vprint(1, "Preparing mask...")
             self.entropy_mask = self.entropy_mask_fnc()
-        self.updateMask = False
+        self.updateEntropyMask = False
+        self.updateEntropy = True
 
     def _mask_triadic_entropy(self, entropy):
+        maskPad = 7 + self.ypad
         if self.entropy_mask is not None:
             self._vprint(1, "Masking...")
-            masked = 7 - entropy
+            masked = maskPad - entropy # (entropy - entropy.min()) / (entropy.max() - entropy.min())
             masked[~self.entropy_mask] = 0
             return masked
         self._vprint(1, "No mask...")
-        return 7 - entropy
+        return maskPad - entropy
 
     # Quickest way to get the data
     def getEntropy(self, loadFile=True):
@@ -599,20 +664,29 @@ class HarmonicEntropy:
             self._prepare_spread()
         if self.updateTransform:
             self._transform_basis()
-        if self.he3 and self.updateMask:
+        if self.he3 and self.updateEntropyMask:
             self._prepare_entropy_mask()
         if self.updateDistribution:
             self._distribute_basis()
-            if not self.he3:
-                self.Entropy = self._do_convolve()
-            else:
-                self.Entropy = self._mask_triadic_entropy(self._do_convolve())
+        if self.updateEntropy:
+            self.EntropyPreMask = self._do_convolve()
 
             if self.weight_option == "all" :
                 self.EntropyAltWeights = {}
                 for option in ["lencf", "lenmaxcf", "sumcf"]:
                     self.setWeightingOption("lencf")
                     self.EntropyAltWeights[option] = self._do_convolve()
+
+            self.updateEntropy = False
+            self.applyEntropyMask = True
+
+        if self.applyEntropyMask:
+            if self.he3:
+                self.Entropy = self._mask_triadic_entropy(self.EntropyPreMask)
+            else:
+                self.Entropy = self.EntropyPreMask + self.ypad
+                # todo alt weights
+            self.applyEntropyMask = False
 
     def saveEntropy(self, filepath=None):
         if self.he3:
@@ -753,14 +827,20 @@ if __name__ == "__main__":
     parser.add_argument('-w', '--weight', choices=['default', 'sqrtnd', 'lencf', 'lenmaxcf', 'sumcf', 'all'])
     parser.add_argument('-t', '--tx', choices=['default', 'lin', 'polar', 'odd-split'])
 
-    parser.add_argument('--pl', type=str, help='Comma-separated list of primes to limit by')
-    parser.add_argument('--pr', type=str, help='Comma-separated list of primes to reject')
+    parser.add_argument('--ypad', type=float, help='Add value to entropy results')
+
+    parser.add_argument('--p-limit', type=str, help='Filter basis set by this prime limit')
+    parser.add_argument('--p-group', type=str, help='Comma-separated list of primes that basis set ratios can be made up of')
+    parser.add_argument('--p-strict', type=str, help='Comma-separated list of primes that must factor in every basis set ratio')
+    parser.add_argument('--p-reject', type=str, help='Comma-separated list of primes to reject')
+
     parser.add_argument('--odd', action='store_true', help='Only include odd-numbered rationals (shortcut for --pr 2)')
     parser.add_argument('--primes', action='store_true', help='Only include strict prime rationals')
     parser.add_argument('--composites', action='store_true', help='Only include strictly composite rationals')
 
     parser.add_argument('--he3', action='store_true', help='3HE mode')
     parser.add_argument('--plot', action='store_true', help="Display plot")
+    parser.add_argument('--plot-dist', action='store_true', help="Show basis distribution plot")
     parser.add_argument('--ticks', action='store_true', help="Auto-select minima-based x-axis ticks")
     parser.add_argument('--save', action='store_true', help="Save to file")
     parser.add_argument('--no-save', action='store_true', help="Don't save plot file")
@@ -781,6 +861,8 @@ if __name__ == "__main__":
     del options['save']
     plot = options['plot']
     del options['plot']
+    plot_distribution = options['plot_dist']
+    del options['plot_dist']
 
     heArgs = { k:v for k,v in options.items() if v is not None }
     he = HarmonicEntropy(**heArgs)
@@ -789,5 +871,10 @@ if __name__ == "__main__":
     if saveText:
         he.saveEntropy()
 
+    if plot_distribution:
+        plt.imshow(np.log(np.abs(he.basis_distribution + 1e-16)), origin='lower')
+        plt.show()
+
     if plot:
         he.makePlot(savePlot)
+        
