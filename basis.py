@@ -129,13 +129,35 @@ def create_mask_from_lambdas(basis_set, *funcs):
         return result
     return composite(basis_set)
 
-# Test for integer set including all of these primes
+# Test for integer set only including primes from this set
+def create_prime_group_test(primes):
+    def check(n):
+        prime_list = get_prime_list(n)
+        for p in prime_list:
+            if p not in primes:
+                return False
+        return True
+    return np.apply_along_axis(lambda row: np.any(np.vectorize(check)(row)), 1, basis_set)
+
+# Test for integer set only including primes from this set
+def create_prime_limit_test(primes):
+    def test(basis_set, primes):
+        limit = primes[-1]
+        def check(n):
+            prime_list = get_prime_list(n)
+            for p in prime_list:
+                if p > limit:
+                    return False
+            return True
+        return np.apply_along_axis(lambda row: np.all(np.vectorize(check)(row)), 1, basis_set)
+    return lambda basis: test(basis, primes)
+
+# Test for integer set containing all of these primes
 def create_exact_prime_test(primes):
     def test(basis_set, primes):
         def check(n):
-            factor_list = get_prime_list(n)
             for p in primes:
-                if p in factor_list:
+                if p % n == 0:
                     return True
             return False
         return np.apply_along_axis(lambda row: np.all(np.vectorize(check)(row)), 1, basis_set)
@@ -145,34 +167,14 @@ def create_exact_prime_test(primes):
 def create_exclusive_prime_test(primes):
     def test(basis_set, primes):
         def check(n):
-            factor_list = get_prime_list(n)
             for p in primes:
-                if p in factor_list:
-                    return False
-            return True
+                return n % p > 0
         return np.apply_along_axis(lambda row: np.all(np.vectorize(check)(row)), 1, basis_set)
     return lambda basis: test(basis, primes)
 
-# Test for integer set including one or more of these primes
-def create_includes_prime_test(primes):
-    def check(n):
-        factor_list = get_prime_list(n)
-        for p in primes:
-            if p in factor_list:
-                return False
-        return True
-    return np.apply_along_axis(lambda row: np.any(np.vectorize(check)(row)), 1, basis_set)
-
 def create_is_prime_test():
     def test(basis_set):
-        def check(n):
-            for p in PRIMES:
-                if n == p:
-                    return True
-                if n > p:
-                    return False
-            return False
-        return np.apply_along_axis(lambda row: np.all(np.vectorize(check)(row)), 1, basis_set)
+        return np.apply_along_axis(lambda row: np.all(np.vectorize(is_prime)(row)), 1, basis_set)
     return test
 
 if __name__ == '__main__':

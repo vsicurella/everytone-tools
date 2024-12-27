@@ -2,27 +2,83 @@ PRIMES = [ 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 6
 NUM_PRIMES = len(PRIMES)
 LAST_PRIME = PRIMES[NUM_PRIMES - 1]
 
+IS_PRIME = { 0: False, 1: True }
+_int_key = 2
+for p in PRIMES:
+    while _int_key < p:
+        IS_PRIME[_int_key] = False
+        _int_key += 1
+    IS_PRIME[_int_key] = True
+    _int_key += 1
+
+def is_prime(n):
+    return IS_PRIME[n]
+
+PRIME_FACTORS = { 0: [], 1: [] }
 def get_prime_factors(n):
+    if n in PRIME_FACTORS:
+        return PRIME_FACTORS[n]
     factors = []
-    q = n
-    for p in PRIMES:
-        if q == 1:
-            break
-        i = 0
-        while q % p == 0:
-            i+=1
-            q //= p
-        factors.append(i)
+    if is_prime(n):
+        for p in PRIMES:
+            if n == p:
+                factors.append(1)
+                break
+            else:
+                factors.append(0)
+    else:
+        q = n
+        for p in PRIMES:
+            if q == 1:
+                break
+            i = 0
+            while q % p == 0:
+                i+=1
+                q //= p
+                
+                # use previous calculations!
+                if q in PRIME_FACTORS:
+                    q_factors = [*PRIME_FACTORS[q]]
+                    factors.append(i)
+                    for k in range(len(factors)):
+                        q_factors[k] += factors[k]
+                    PRIME_FACTORS[n] = q_factors
+                    return q_factors
+
+            factors.append(i)
+    PRIME_FACTORS[n] = factors
     return factors
 
 def get_prime_list(n):
-    factors = []
-    q = n
+    if is_prime(n):
+        return [ n ]
+    if n in PRIME_FACTORS:
+        return [ PRIMES[i] for i in range(len(PRIME_FACTORS[n])) if PRIME_FACTORS[n][i] > 0 ]
+    primes = []
     for p in PRIMES:
-        if q == 1:
+        if n % p == 0:
+            primes.append(p)
+            continue
+        elif p > n:
             break
-        if q % p == 0:
-            factors.append(p)
-            while q % p == 0:
-                q //= p
-    return factors
+    return primes
+
+if __name__ == '__main__':
+    import sys
+    import random
+
+    rnd = random.Random()
+    print(f'Random prime test:')
+    rnd_test_str = "\t"
+    for i in range(10):
+        n = rnd.randint(0, LAST_PRIME)
+        rnd_test_str += f'{n}: {is_prime(n)}, '
+    print(rnd_test_str)
+
+    max_int = 32
+    for n in range(2, max_int):
+        factors = get_prime_factors(n)
+        prime_list = get_prime_list(n)
+        print(f'{n}: {factors}, primes: {prime_list}')
+
+    print("Done")
