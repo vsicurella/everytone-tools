@@ -549,7 +549,7 @@ class HarmonicEntropy:
         self.updateTransform = False
         self.updateDistribution = True
     
-    def _distribute_basis(self):
+    def _distribute_basis(self, alt_transform=None, alt_weights=None): # hacky temp solution
         array = self.basis_distribution
         array_alpha = self.basis_distribution_alpha
         shape = self.basis_distribution.shape
@@ -568,8 +568,16 @@ class HarmonicEntropy:
         self.basis_distribution.fill(0)
         self.basis_distribution_alpha.fill(0)
 
-        np.add.at(self.basis_distribution, self.basis_transform, self.basis_weights)
-        np.add.at(self.basis_distribution_alpha, self.basis_transform, self.basis_weight_alphas)
+        transform = alt_transform if alt_transform is not None else self.basis_transform
+        if alt_weights is not None:
+            weights = alt_weights
+            weight_alphas = alt_weights ** self.a
+        else:
+            weights = self.basis_weights
+            weight_alphas = self.basis_weight_alphas
+
+        np.add.at(self.basis_distribution, transform, weights)
+        np.add.at(self.basis_distribution_alpha, transform, weight_alphas)
 
         self.updateDistribution = False
         self.updateEntropy = True
@@ -644,7 +652,7 @@ class HarmonicEntropy:
                 self.Entropy = np.load(file)
                 self.loadedEntropyFile = file
         else:
-            return self.calculate()
+            self.calculate()
         return self.Entropy
 
     def calculate(self):
