@@ -6,6 +6,7 @@ import num2word
 import datetime
 from basis import farey, farey_set_to_basis, get_triplet_basis
 from math import gcd
+from utils import get_cf
 
 class RatioInfo:
     class_name = None
@@ -124,6 +125,7 @@ class RatioInfo:
             # { 'name': f'{name}_display',        'unique': True,     'keys': ["display"] },
             { 'name': f'{name}_log2',           'unique': True,     'keys': ["log2"] },
             { 'name': f'{name}_prime_list',     'unique': False,    'keys': ["prime_list"] },
+            { 'name': f'{name}_prime_limit',     'unique': False,    'keys': ["prime_limit"] },
             # { 'name': f'{name}_prime_factors',  'unique': True,     'keys': ["prime_factors"] }
         ]
 
@@ -190,6 +192,7 @@ class DyadInfo(RatioInfo):
             self.complexity = data[i]; i+=1
             self.integer_limit = data[i]; i+=1
             self.he_weight = data[i]; i+=1
+            self.continued_fraction = data[i]; i+=1
             self.__read_db_arg__ = i
         else:
             self.numerator = int(numerator)
@@ -220,29 +223,38 @@ class DyadInfo(RatioInfo):
         self.integer_limit = max(self.denominator, self.numerator)
         self.he_weight = float(np.sqrt(self.complexity))
 
+        self.continued_fraction = get_cf(self.decimals[0], 100, 1e-9)
+        # test
+        for v in self.continued_fraction:
+            if v > 1e9:
+                raise Exception("Woah!")
+
     __schema_items__ = [ 
         *RatioInfo.__schema_items__,
         "denominator INT NOT NULL",
         "numerator INT NOT NULL",
         "complexity INT NOT NULL",
         "integer_limit INT NOT NULL",
-        "he_weight FLOAT NOT NULL"
+        "he_weight FLOAT NOT NULL",
+        "continued_fraction INT[] NOT NULL",
         ]
     
-    __keys__ = [*RatioInfo.__keys__, "denominator", "numerator", "complexity", "integer_limit", "he_weight"]
+    __keys__ = [*RatioInfo.__keys__, "denominator", "numerator", "complexity", "integer_limit", "he_weight", "continued_fraction" ]
     def __getitem__(self, index):
         result = super().__getitem__(index)
         if result == self and not isinstance(index, tuple):
             if index == "denominator":
                 return self.denominator
-            if index == "numerator":
+            elif index == "numerator":
                 return self.numerator
-            if index == "complexity":
+            elif index == "complexity":
                 return self.complexity
-            if index == "integer_limit":
+            elif index == "integer_limit":
                 return self.integer_limit
-            if index == "he_weight":
+            elif index == "he_weight":
                 return self.he_weight
+            elif index == "continued_fraction":
+                return self.continued_fraction
         else:
             return result
         return self
@@ -361,7 +373,7 @@ class TriadInfo(RatioInfo):
         return self
     
     def _get_table_indexes_():
-        indexes = RatioInfo._get_table_indexes_(DyadInfo.class_name)
+        indexes = RatioInfo._get_table_indexes_(TriadInfo.class_name)
         indexes.append({ 'name': 'triad_root',            'unique': False,    'keys': [ "root" ] })
         indexes.append({ 'name': 'triad_mediant',         'unique': False,    'keys': [ "mediant" ] })
         indexes.append({ 'name': 'triad_dominant',        'unique': False,    'keys': [ "dominant" ] })
@@ -433,6 +445,11 @@ class RatioDb:
         documents = self.cursor.fetchall() 
         return documents
     
+    def get_count(self, table):
+        self.cursor.execute(f'SELECT COUNT(*) FROM {table}')
+        result = self.cursor.fetchone()
+        return 0 if len(result) == 0 else result[0]
+    
     def find_harmonic(self, harmonic):
         command = f"SELECT * FROM harmonics WHERE harmonic={harmonic}"
         self.cursor.execute(command)
@@ -444,6 +461,7 @@ class RatioDb:
         self.cursor.execute(command)
         documents = [ DyadInfo(None, None, data=d) for d in self.cursor.fetchall() ]
         return None if len(documents) == 0 else documents[0]
+    # first octave of farey(N) - where 1200 >= any(cents) and prime_limit <= (50 * 2 - 1) and (numerator <= 50 or denominator <= 50)
 
     def find_triad(self, r, m, d):
         command = f'SELECT * FROM triads WHERE root = {r} and mediant = {m} and dominant = {d}'
@@ -452,13 +470,20 @@ class RatioDb:
         return None if len(documents) == 0 else documents[0]
     
 def BuildHarmonics(db: RatioDb, limit=1024):
-    num_harmonics = len(db.get_table("harmonics"))
+    if limit < 1:
+        print("Skipping harmonics")
+        return
+
+    num_harmonics = db.get_count("harmonics")
     for i in range(num_harmonics + 1, limit + 1):
         db.add_harmonic(i)
     print("finished with harmonics up to " + str(limit))
 
 def BuildDyads(db:RatioDb, dyadLimit=300, harmonic_extension=64):
-    num_dyads = len(db.get_table("dyads"))
+    if dyadLimit < 1:
+        print("Skipping dyads")
+        return
+    num_dyads = db.get_count("dyads")
     int_limit_set = farey(dyadLimit)
     periodic_set = farey_set_to_basis(int_limit_set, harmonic_extension)
     i = 0
@@ -473,15 +498,20 @@ def BuildDyads(db:RatioDb, dyadLimit=300, harmonic_extension=64):
         i += 1
     print(f"Saved {i} dyads up to int limit {dyadLimit} up to harmonic {harmonic_extension}")
 
-def BuildTriads(db:RatioDb, integerLimit=100, complexity_limit=27_000_000, harmonic_extension=64):
-    num_triads = len(db.get_table("triads"))
-    triads = get_triplet_basis(integerLimit, harmonic_extension, complexity_limit)
+def BuildTriads(db:RatioDb, integerLimit=100, complexity_limit=27_000_000, harmonic_extension=64, triad_start_harmonic=1):
+    num_triads = db.get_count("triads")
+    print(f"Currently {num_triads} triads")
+
+    print(f'BuildTriads - generating triad set with params {integerLimit} - {complexity_limit} - {harmonic_extension} - {triad_start_harmonic}...')
+    triads = get_triplet_basis(integerLimit, harmonic_extension, complexity_limit, start_harmonic=triad_start_harmonic)
+    print(f'BuildTriads - generated {len(triads)} triads')
+
     i = 0
     last_root = 0
     for r,m,d in triads:
         if r != last_root:
             last_root = r
-            print(f"BuildTriads on root {r}")
+            print(f"BuildTriads - on root {r}")
 
         if r > m or r > d or m > d:
             raise Exception(f"Invalid triad syntax: {r}:{m}:{d}")
@@ -491,13 +521,14 @@ def BuildTriads(db:RatioDb, integerLimit=100, complexity_limit=27_000_000, harmo
                 continue
         db.add_triad(r, m, d)
         i += 1
-    print(f"Saved {i} triads with int limit {integerLimit} up to harmonic {harmonic_extension} with complexity limit {complexity_limit}")
 
-def BuildRatioDb(db: RatioDb, harmLimit=1024, dyadLimit=512, triadLimit=128, harmonic_extension=32):
+    print(f"BuildTriads - Saved {i} triads with int limit {integerLimit} up to harmonic {harmonic_extension} with complexity limit {complexity_limit}")
+
+def BuildRatioDb(db: RatioDb, harmLimit=1024, dyadLimit=512, triadLimit=128, harmonic_extension=32, triad_start_harmonic=1):
     BuildHarmonics(db, harmLimit)
     BuildDyads(db, dyadLimit, harmonic_extension)
-    BuildTriads(db, triadLimit, harmonic_extension)
+    BuildTriads(db, triadLimit, harmonic_extension=harmonic_extension, triad_start_harmonic=triad_start_harmonic)
 
 if __name__ == "__main__":
     ratioDb = RatioDb()
-    BuildRatioDb(ratioDb)
+    # BuildRatioDb(ratioDb, 0, 0, 128, 4, 100)
