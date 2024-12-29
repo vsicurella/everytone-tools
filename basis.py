@@ -73,17 +73,18 @@ def farey_len(n):
 def farey(n):
     return _farey(n)
 
+# ndSet, basis: [ denominator, numerator ]
 def farey_set_to_basis(ndSet, harmonic_limit=2):
-    size = ndSet.shape[0]
+    size = ndSet.shape[0] - 1
 
     octaves = np.ceil(np.log2(harmonic_limit))
-    period_shape = (int(size * np.exp2(octaves-1) - (harmonic_limit > 2)), 2)
+    period_shape = (int((size+1) * np.exp2(octaves-1) - (harmonic_limit > 2)), 2)
 
     basis = np.zeros(period_shape, dtype=np.uint) # overestimate
-    basis[:size, 0] = ndSet[:, 1]
-    basis[:size, 1] = ndSet[:, 0] + ndSet[:, 1]
+    basis[:size, 0] = ndSet[:size, 1]
+    basis[:size, 1] = ndSet[:size, 0] + ndSet[:size, 1]
 
-    i = 1
+    i = 0
     p = size
     row = ndSet[-1,:]
     limit = np.asarray([ 1, harmonic_limit ])
@@ -179,8 +180,19 @@ def create_is_prime_test():
 
 if __name__ == '__main__':
     N = 10
-    harmonic = 2
+    harmonic = 16
     basis_set = get_farey_sequence_basis(N, harmonic)
+
+    duplicateCheck = {}
+    i = 0
+    for dyad in basis_set:
+        dyad = f'{dyad[1]}_{dyad[0]}'
+        if dyad in duplicateCheck:
+            raise Exception(f"Duplicate dyad! At index {i}")
+        i+=1
+        duplicateCheck[dyad] = True
+    print("successful dyad test")
+
     print(f"N: {N}, set size: {len(basis_set)}")
     basis_cents = nd_basis_to_cents(basis_set)
 
