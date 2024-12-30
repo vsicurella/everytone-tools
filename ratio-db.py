@@ -1,10 +1,10 @@
 import psycopg2
-from psycopg2.extras import execute_values
 import numpy as np
 from primes import *
 import num2word
 import datetime
-from basis import farey, farey_set_to_basis, get_triplet_basis
+from farey import farey
+from basis import farey_set_to_basis, get_triplet_basis
 from math import gcd
 from utils import get_cf
 
@@ -231,8 +231,8 @@ class DyadInfo(RatioInfo):
 
     __schema_items__ = [ 
         *RatioInfo.__schema_items__,
-        "denominator INT NOT NULL",
-        "numerator INT NOT NULL",
+        "denominator INT NOT NULL references harmonics(harmonic)",
+        "numerator INT NOT NULL references harmonics(harmonic)",
         "complexity INT NOT NULL",
         "integer_limit INT NOT NULL",
         "he_weight FLOAT NOT NULL",
@@ -341,13 +341,13 @@ class TriadInfo(RatioInfo):
 
     __schema_items__ = [ 
         *RatioInfo.__schema_items__,
-        "root INT NOT NULL",
-        "mediant INT NOT NULL",
-        "dominant INT NOT NULL",
+        "root INT NOT NULL references harmonics(harmonic)",
+        "mediant INT NOT NULL references harmonics(harmonic)",
+        "dominant INT NOT NULL references harmonics(harmonic)",
         "complexity INT NOT NULL",
         "integer_limit INT NOT NULL",
         "he_weight FLOAT NOT NULL",
-        "dyad_ids INT[]"
+        "dyad_ids INT[] references dyads(id)"
         ]
     
     __keys__ = [*RatioInfo.__keys__, "root", "mediant", "dominant", "complexity", "integer_limit", "he_weight", "dyad_ids"]
@@ -400,6 +400,17 @@ class RatioDb:
             commands.append(create_statement)
         return commands
     
+    def _wrap_document_(table, data):
+        if table == "harmonics":
+            return HarmonicInfo(None, data=data)
+        elif table == "dyads":
+            return DyadInfo(None, None, data=data)
+        elif table == "triads":
+            return TriadInfo(None, None, None, data=data)
+    def _wrap_documents_(table, documents):
+        wrapped = [ RatioDb._wrap_document_(table, d) for d in documents if d is not None ]
+        return wrapped if len(wrapped) > 0 else None
+    
     def __init__(self):
         self.connection = psycopg2.connect(f"host=localhost dbname=ratios-db user=postgres")
         self.cursor =  self.connection.cursor()
@@ -439,36 +450,70 @@ class RatioDb:
         triad.updateDyadIds(self)
         return self.add(triad)
 
-    def get_table(self, table):
-        command = f"SELECT * FROM {table}"
+    def query_table(self, table, tagsString="*", matchString=None, sortString=None, queryLimit=0, offset=0, fetchLimit=0):
+        command = f'SELECT {tagsString} FROM {table}'
+
+        if matchString is not None:
+            command += f' WHERE {matchString}'
+        if sortString is not None:
+            command += f' ORDER BY {sortString}'
+        if queryLimit > 0:
+            command += f' LIMIT {queryLimit}'
+        if offset > 0:
+            command += f' OFFSET {offset}'
+
         self.cursor.execute(command)
-        documents = self.cursor.fetchall() 
-        return documents
-    
-    def get_count(self, table):
-        self.cursor.execute(f'SELECT COUNT(*) FROM {table}')
-        result = self.cursor.fetchone()
-        return 0 if len(result) == 0 else result[0]
-    
+
+        results = None
+        if fetchLimit == 1:
+            results =  self.cursor.fetchone()
+        elif fetchLimit > 0:
+            results =  self.cursor.fetchmany(fetchLimit)
+        else:
+            results = self.cursor.fetchall()
+        
+        if results is None or len(results) == 0:
+            return None
+        return results
+
+    def query_ratios(self, table, tagsString="*", matchString=None, sortString=None, queryLimit=0, offset=0, fetchLimit=0):
+        if tagsString == None:
+            tagsString = "*"
+        results = self.query_table(table, tagsString, matchString, sortString, queryLimit, offset, fetchLimit)
+        if tagsString == ".":
+            documents = RatioDb._wrap_documents_(table, results)
+            if fetchLimit == 1:
+                return documents[0]
+            return documents
+        return results
+
+    def query_one_ratio(self, table, tagsString="*", matchString=None, sortString=None, offset=0):
+        return self.query_ratios(table, tagsString, matchString, sortString, offset=offset, queryLimit=1, fetchLimit=1)
+
+    def get_count(self, table, **kwArgs):
+        tags = "*" if "tags" not in kwArgs else kwArgs["tags"]
+        result = self.query_table(table, f'COUNT({tags})', fetchLimit=1)
+        return 0 if result is None else result[0]
+
     def find_harmonic(self, harmonic):
-        command = f"SELECT * FROM harmonics WHERE harmonic={harmonic}"
-        self.cursor.execute(command)
-        documents = [ HarmonicInfo(None, data=d) for d in self.cursor.fetchall() ]
-        return None if len(documents) == 0 else documents[0]
+        return self.query_one_ratio("harmonics", matchString=f"harmonic={harmonic}")
     
+    def find_harmonics(self, tagsString=None, matchString=None, sortString=None, offset=0, queryLimit=0):
+        return self.query_ratios("harmonics", tagsString=tagsString, matchString=matchString, sortString=sortString, offset=offset, queryLimit=queryLimit)
+
     def find_dyad(self, n, d):
-        command = f'SELECT * FROM dyads WHERE numerator = {n} and denominator = {d}'
-        self.cursor.execute(command)
-        documents = [ DyadInfo(None, None, data=d) for d in self.cursor.fetchall() ]
-        return None if len(documents) == 0 else documents[0]
-    # first octave of farey(N) - where 1200 >= any(cents) and prime_limit <= (50 * 2 - 1) and (numerator <= 50 or denominator <= 50)
+        return self.query_one_ratio("dyads", matchString=f"numerator={n} and denominator={d}")
+
+    def find_dyads(self, tagsString=None, matchString=None, sortString=None, offset=0, queryLimit=0):
+        return self.query_ratios("dyads", tagsString=tagsString, matchString=matchString, sortString=sortString, offset=offset, queryLimit=queryLimit)
 
     def find_triad(self, r, m, d):
-        command = f'SELECT * FROM triads WHERE root = {r} and mediant = {m} and dominant = {d}'
-        self.cursor.execute(command)
-        documents = [ TriadInfo(None, None, None, data=d) for d in self.cursor.fetchall() ]
-        return None if len(documents) == 0 else documents[0]
+        return self.query_one_ratio("triads", matchString=f"root={r} and mediant={m} and dominant={d}")
     
+    def find_triads(self, tagsString=None, matchString=None, sortString=None, offset=0, queryLimit=0):
+        return self.query_ratios("triads", tagsString=tagsString, matchString=matchString, sortString=sortString, offset=offset, queryLimit=queryLimit)
+
+
 def BuildHarmonics(db: RatioDb, limit=1024):
     if limit < 1:
         print("Skipping harmonics")
