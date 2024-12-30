@@ -11,6 +11,11 @@ def ratio_to_cents(ratio):
     CENTS_LOOKUP[ratio] = np.round(np.log2(ratio) * 1200, CENTS_ROUND) 
     return CENTS_LOOKUP[ratio]
 
+def nd_basis_to_cents(nd_periods):
+    to_cents = np.vectorize(ratio_to_cents)
+    cents = to_cents(nd_periods[:,1:] / nd_periods[:,:-1])
+    return cents.squeeze()
+
 def get_cf(num, maxdepth=20, round0thresh=1e-5):
     n = num
     cf = [] # the continued fraction
