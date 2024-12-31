@@ -12,11 +12,11 @@ from farey import *
 
 _RATIO_DB_ = None
 _USE_RATIO_DB_ = True
-try:
-    _RATIO_DB_ = __import__("ratio-db")
-except:
-    _USE_RATIO_DB_ = False
-    print("Unable to import ratio-db.py, perhaps due to a missing dependency. Using fallback code.")
+import ratio_db as _RATIO_DB_
+# try:
+# except:
+#     _USE_RATIO_DB_ = False
+#     print("Unable to import ratio-db.py, perhaps due to a missing dependency. Using fallback code.")
 
 
 # ndSet, basis: [ denominator, numerator ]
@@ -126,16 +126,21 @@ def create_is_prime_test():
     return test
 
 class BasisParams:
-    def __init__(self, complexity_limit, integer_limit=None, he3=False, noDyads=False):
+    def __init__(self, complexity_limit, he3=False, noDyads=False):
          self.complexity_limit = complexity_limit
-         self.integer_limit = integer_limit
          self.he3 = he3
          self.noDyads = noDyads
-class PrimeLimitBasisParams(BasisParams):
-    def __init__(self, limit, harmonic_limit, complexity_limit, integer_limit=None, he3=False, noDyads=False):
-        super().__init__(complexity_limit, integer_limit, he3, noDyads)
-        self.limit = limit
+
+class IntegerBasisParams(BasisParams):
+    def __init__(self, integer_limit, harmonic_limit=2, complexity_limit=None, he3=False, noDyads=False):
+        super().__init__(complexity_limit, he3, noDyads)
+        self.integer_limit = integer_limit
         self.harmonic_limit = harmonic_limit
+
+class PrimeLimitBasisParams(IntegerBasisParams):
+    def __init__(self, limit, harmonic_limit=2, complexity_limit=None, integer_limit=None, he3=False, noDyads=False):
+        super().__init__(integer_limit, harmonic_limit, complexity_limit, he3, noDyads)
+        self.prime_limit = limit
 
 class BasisInterface:
     ratioDb = None
@@ -145,15 +150,11 @@ class BasisInterface:
     find_dyads = __dummy_find__
     find_triads = __dummy_find__
     
-    get_farey_sequence_basis = lambda self, N, harmonic_limit: get_farey_sequence_basis(N, harmonic_limit)
-    get_prime_basis = lambda params: [] # TODO
+    get_int_basis = lambda self, params: False # TODO
+    get_prime_basis = lambda self, params: False # TODO
+    set_basis = lambda self, newBasis: False # TODO
 
     _create_prime_limit_iterator_ = lambda prime, limit: iter(range(0)) # TODO
-
-    def _get_farey_sequence_basis_db_(N, harmonic_limit):
-        basis_set = BasisInterface.find_dyads('values', f'1200 >= any(cents) and prime_limit <= ({N*2-1}) and (numerator<={N} or denominator<={N}))', 'integer_limit DESC')
-        # todo figure this query out
-        return farey_set_to_basis(basis_set, harmonic_limit)
     
     def _get_harmonic_segment_db_(self, start=8, end=16, prime_limit=13, sortString=None, limit=0):
         harmonics = self.find_harmonics(tagString="harmonic", matchString=f'prime_limit={prime_limit} and harmonic >= {start} and harmonic <= {end}', sortString=sortString, limit=limit)
@@ -163,20 +164,58 @@ class BasisInterface:
         harmonics = self._get_harmonic_segment_db_(start, end, prime_limit)
         return iter(harmonics)
 
+    # todo share query building code?
+    def _get_integer_basis_db_(self, params:IntegerBasisParams):
+        int_limit = 100 if params.integer_limit is None else params.integer_limit
+        max_harmonic = int_limit * params.harmonic_limit # / gcd(int_limit, params.harmonic_limit)  # these aren't exactly right 
+        query = f"(SELECT MAX(d) FROM UNNEST(decimals) AS d) <= {params.harmonic_limit}"
+        if params.complexity_limit:
+            query += f' and complexity<={params.complexity_limit}'
+        if params.he3:
+            query += f" and root <= {int_limit} and dominant <= {max_harmonic}"
+            if params.noDyads:
+                query += f' and (root < mediant and mediant < dominant)'
+            return self.find_triads(matchString=query)#, sortString='integer_limit ASC, root ASC')
+        query += f" and denominator <= {int_limit} and numerator <= {max_harmonic}"
+        return self.find_dyads(matchString=query, sortString='cents ASC')
+
     def _get_prime_basis_db_(self, params:PrimeLimitBasisParams):
-            prime_match = f'prime_limit<={params.limit}'
-            if params.complexity_limit:
-                prime_match += f' and complexity_limit<={params.complexity_limit}'
-            if params.integer_limit:
-                prime_match += f' and integer_limit<={params.integer_limit}'
-            prime_match += f' and (SELECT MAX(d) FROM unnest(decimals) AS d) <= {params.harmonic_limit}'
-            if params.he3:
-                triad_match = prime_match
-                if params.noDyads:
-                    triad_match += f' and (root < mediant and mediant < dominant)'
-                # triad_match += f' and '
-                return self.find_triads(matchString=triad_match, sortString='integer_limit ASC, root ASC')
-            return self.find_dyads(matchString=prime_match, sortString='any(cents) ASC')
+        prime_limit = 300 if params.prime_limit is None else params.prime_limit
+        prime_match = f'prime_limit<={prime_limit}'
+        if params.complexity_limit:
+            prime_match += f' and complexity<={params.complexity_limit}'
+        if params.integer_limit:
+            prime_match += f' and integer_limit<={params.integer_limit}'
+        prime_match += f' and (SELECT MAX(d) FROM unnest(decimals) AS d) <= {params.harmonic_limit}'
+        if params.he3:
+            triad_match = prime_match
+            if params.noDyads:
+                triad_match += f' and (root < mediant and mediant < dominant)'
+            return self.find_triads(matchString=triad_match)#, sortString='integer_limit ASC, root ASC')
+        return self.find_dyads(matchString=prime_match, sortString='cents ASC')
+    
+    def set_basis_params(self, newParams):
+        if hasattr(self, "params") and self.basis_query == newParams:
+            return
+        self.basis_query = newParams
+        self.he3 = newParams.he3
+        self.doBasisUpdate = True
+
+    def _set_basis_db_(self, basis):
+        self.basis = basis
+        classInfo = _RATIO_DB_.TriadInfo if self.he3 else _RATIO_DB_.DyadInfo
+        keys = classInfo.getColumnKeys(classInfo)
+
+        self.values         = np.asarray([ data[keys["values"]] for data in basis ])
+        self.labels         = np.asarray([ data[keys["label"]] for data in basis ])
+        self.decimals       = np.asarray([ data[keys["decimals"]] for data in basis ])
+        self.cents          = np.asarray([ data[keys["cents"]] for data in basis ])
+        self.he_weights     = np.asarray([ data[keys["he_weight"]] for data in basis  ])
+        self.prime_limits   = np.asarray([ data[keys["prime_limit"]] for data in basis ])
+        self.prime_factors  = [ data[keys["prime_factors"]] for data in basis ]
+
+        self.basis_length = len(self.basis)
+
 
     def __init__(self):
         if _USE_RATIO_DB_:
@@ -184,60 +223,48 @@ class BasisInterface:
             self.find_harmonics             = BasisInterface.ratioDb.find_harmonics
             self.find_dyads                 = BasisInterface.ratioDb.find_dyads
             self.find_triads                = BasisInterface.ratioDb.find_triads
-            self.get_farey_sequence_basis   = self._get_farey_sequence_basis_db_
+            # self.get_farey_sequence_basis   = self._get_farey_sequence_basis_db_
             self.get_prime_basis            = self._get_prime_basis_db_
+            self.get_int_basis              = self._get_integer_basis_db_
+            self.set_basis                  = self._set_basis_db_
             self._create_harmonic_segment_iterator_db_ = self._create_harmonic_segment_iterator_db_
 
 class Basis(BasisInterface):
 
-    def __init__(self,**kwArgs):
+    def __init__(self, params:BasisParams):
         super().__init__()
-
-        self.he3 = False if "he3" not in kwArgs else kwArgs["he3"]
-        self.noDyads = False if "noDyads" not in kwArgs else kwArgs["noDyads"]
-
-        self.params = None if "params" not in kwArgs else kwArgs["params"]
+        self.set_basis_params(params)
 
     def setToPrimeLimit(self, limit, harmonic_limit=2, complexity_limit=None, integer_limit=None):
-        # if complexity_limit:
-        #     self.prime_query.complexity_limit = complexity_limit
-        # else:
-            # end_harm = limit * harmonic_limit
-            # [[adj_harm]] = self.find_harmonics("harmonic", f"prime_limit={params.limit} and harmonic < {end_harm}", 'harmonic DESC', queryLimit=1)
-            # c_limit = (end_harm) ** (3 - (1 if params.he3 else 2)) * adj_harm
-            # c_limit = end_harm * harmonic_limit * (harmonic_limit if self.he3 else 1)
-            # c_limit = end_harm * harmonic_limit
-
         if integer_limit is None:
             integer_limit = limit * harmonic_limit ** 2
-
-        self.prime_query = PrimeLimitBasisParams(limit, harmonic_limit, complexity_limit, integer_limit, self.he3, self.noDyads)
-        if self.prime_query == self.params:
-            return
-
-        basis = self.get_prime_basis(self.prime_query)
-        self._set_basis_(basis) # move to interface?
-        self.params = self.prime_query
+        params = PrimeLimitBasisParams(limit, harmonic_limit, complexity_limit, integer_limit, self.he3, self.noDyads)
+        self.set_basis_params(params)
 
     # def setToPrimodalStructure(self, prime, start=2, end=4):
-    #     self.prime_query = PrimeLimitBasisParams(prime, end, None, prime*end, self.he3, self.noDyads)
-    #     self.basis = self.get_prime_basis(self.prime_query)
-    #     self.params = self.prime_query
+    #     self.basis_query = PrimeLimitBasisParams(prime, end, None, prime*end, self.he3, self.noDyads)
+    #     self.basis = self.get_prime_basis(self.basis_query)
+    #     self.params = self.basis_query
 
-    def setToIntegerLimit(self, int_limit, harmonic_limit):
-        #todo params
-        if self.he3:
-            self.basis = self.find_triads()
+    def setToIntegerLimit(self, int_limit, harmonic_limit=2, complexity_limit=None):
+        params = IntegerBasisParams(int_limit, harmonic_limit, complexity_limit, self.he3, self.noDyads)
+        self.set_basis_params(params)
+    
+    def applyCurrentParams(self):
+        if type(self.basis_query) == PrimeLimitBasisParams:
+            basis = self.get_prime_basis(self.basis_query)
+        # if type(self.basis_query) == IntegerBasisParams:
         else:
-            return get_farey_sequence_basis(int_limit, harmonic_limit)
-        
-    def _set_basis_(self, basis):
-        self.basis = basis
-        self.values     = np.asarray([ data[1] for data in basis ])
-        self.labels     = np.asarray([ data[2] for data in basis ])
-        self.decimals   = np.asarray([ data[5] for data in basis ])
-        self.cents      = np.asarray([ data[7] for data in basis ])
-        self.he_weights = np.asarray([ data[17] for data in basis  ])
+            basis = self.get_int_basis(self.basis_query)
+
+        self.set_basis(basis)
+        self.params = self.basis_query
+
+    def updateBasis(self):
+        if self.doBasisUpdate:
+            self.applyCurrentParams()
+            return True
+        return False
         
     def getSet(self):
         return self.basis
@@ -249,13 +276,19 @@ class Basis(BasisInterface):
         return self.labels
     
     def getDecimals(self):
-        return self.decimals
-    
+        if self.he3:
+            return self.decimals
+        return self.decimals[:,0]
+        
     def getCents(self):
-        return self.cents
+        if self.he3:
+            return self.cents
+        return self.cents[:,0]
     
     def getWeights(self):
-        return self.he_weights
+        if self.he3:
+            return self.he_weights
+        return self.he_weights[:,0]
 
 if __name__ == '__main__':
     
@@ -280,6 +313,8 @@ if __name__ == '__main__':
     # triplet_cennts = nd_basis_to_cents(triplet_set)
 
     basis = Basis(he3=True)
-    basis.setToPrimeLimit(5, 4)
+    # basis.setToPrimeLimit(5, 4)
+    basis.setToIntegerLimit(100)
+    basis.applyCurrentParams()
 
     print("Done")
