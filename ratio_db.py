@@ -1,10 +1,8 @@
 import psycopg2
+import datetime
+import num2word
 import numpy as np
 from primes import *
-import num2word
-import datetime
-from farey import farey
-from basis import farey_set_to_basis, get_triplet_basis
 from math import gcd
 from utils import get_cf
 
@@ -69,32 +67,8 @@ class RatioInfo:
     __keys__ = [ "values","label", "name", "display", "decimals","log2","cents","prime_list","prime_factors", "prime_limit" ]
     def __getitem__(self, index):
         if not isinstance(index, tuple):
-            if index == "id":
-                return self.id
-            # if index == "ratio_type":
-            #     return self.ratio_type
-            if index == "values":
-                return self.values
-            if index == "label":
-                return self.label
-            if index == "display":
-                return self.display
-            if index == "name":
-                return self.name
-            if index == "decimals":
-                return self.decimals
-            if index == "log2":
-                return self.log2
-            if index == "cents":
-                return self.cents
-            if index == "prime_list":
-                return self.prime_list
-            if index == "prime_factors":
-                return self.prime_factors
-            if index == "prime_limit":
-                return self.prime_limit
-            if index == "created_at":
-                return self.created_at
+            if hasattr(self, index):
+                return getattr(self, index)
         return self
     
     __schema_items__ = [
@@ -120,14 +94,16 @@ class RatioInfo:
         
     def _get_table_indexes_(name):
         return [
-            # { 'name': f'{name}_values',         'unique': True,     'keys': ["values"] },
-            { 'name': f'{name}_label',          'unique': True,     'keys': ["label"] },
-            # { 'name': f'{name}_display',        'unique': True,     'keys': ["display"] },
-            { 'name': f'{name}_log2',           'unique': True,     'keys': ["log2"] },
-            { 'name': f'{name}_prime_list',     'unique': False,    'keys': ["prime_list"] },
-            { 'name': f'{name}_prime_limit',     'unique': False,    'keys': ["prime_limit"] },
-            # { 'name': f'{name}_prime_factors',  'unique': True,     'keys': ["prime_factors"] }
+            { 'name': f'{name}_label',              'unique': True,     'keys': ["label"] },
+            { 'name': f'{name}_log2',               'unique': True,     'keys': ["log2"] },
+            { 'name': f'{name}_prime_list',         'unique': False,    'keys': ["prime_list"] },
+            { 'name': f'{name}_prime_limit',        'unique': False,    'keys': ["prime_limit"] },
+            # { 'name': f'{name}_prime_factors',    'unique': True,     'keys': ["prime_factors"] }
         ]
+    
+    __column_keys__ = [ 'id', *__keys__, 'created_at' ]
+    def getColumnKeys(self):
+        return { self.__column_keys__[i]: i for i in range(len(self.__column_keys__)) }
 
 class HarmonicInfo(RatioInfo):
     class_name = "harmonics"
@@ -176,6 +152,8 @@ class HarmonicInfo(RatioInfo):
         indexes.append({ 'name': 'harmonic',            'unique': True,     'keys': [ "harmonic" ] })
         indexes.append({ 'name': 'harmonic_is_prime',   'unique': False,    'keys': [ "is_prime" ] })
         return indexes
+    
+    __column_keys__ = [ *RatioInfo.__column_keys__, "harmonic", "harmonic_is_prime" ]
 
 class DyadInfo(RatioInfo):
     class_name = "dyads"
@@ -238,7 +216,7 @@ class DyadInfo(RatioInfo):
         "he_weight FLOAT NOT NULL",
         "continued_fraction INT[] NOT NULL",
         ]
-    
+
     __keys__ = [*RatioInfo.__keys__, "denominator", "numerator", "complexity", "integer_limit", "he_weight", "continued_fraction" ]
     def __getitem__(self, index):
         result = super().__getitem__(index)
@@ -268,6 +246,8 @@ class DyadInfo(RatioInfo):
         indexes.append({ 'name': 'dyad_integer_limit',  'unique': False,    'keys': [ "integer_limit" ] })
         indexes.append({ 'name': 'dyad_he_weight',      'unique': False,    'keys': [ "he_weight" ] })
         return indexes
+
+    __column_keys__ = [ *RatioInfo.__column_keys__, "denominator", "numerator", "complexity", "integer_limit", "he_weight", "continued_fraction" ]
 
 class TriadInfo(RatioInfo):
     class_name = "triads"
@@ -384,6 +364,7 @@ class TriadInfo(RatioInfo):
         indexes.append({ 'name': 'triad_dyad_ids',        'unique': True,     'keys': [ "dyad_ids" ], 'partial': 'not null' })
         return indexes
     
+    __column_keys__ = [ *RatioInfo.__column_keys__, "root", "mediant", "dominant", "complexity", "integer_limit", "he_weight", "dyad_ids" ]
 
 class RatioDb:
     def _create_class_table_(self, table_def):
@@ -513,67 +494,5 @@ class RatioDb:
     def find_triads(self, tagsString=None, matchString=None, sortString=None, offset=0, queryLimit=0):
         return self.query_ratios("triads", tagsString=tagsString, matchString=matchString, sortString=sortString, offset=offset, queryLimit=queryLimit)
 
-
-def BuildHarmonics(db: RatioDb, limit=1024):
-    if limit < 1:
-        print("Skipping harmonics")
-        return
-
-    num_harmonics = db.get_count("harmonics")
-    for i in range(num_harmonics + 1, limit + 1):
-        db.add_harmonic(i)
-    print("finished with harmonics up to " + str(limit))
-
-def BuildDyads(db:RatioDb, dyadLimit=300, harmonic_extension=64):
-    if dyadLimit < 1:
-        print("Skipping dyads")
-        return
-    num_dyads = db.get_count("dyads")
-    int_limit_set = farey(dyadLimit)
-    periodic_set = farey_set_to_basis(int_limit_set, harmonic_extension)
-    i = 0
-    for d,n in periodic_set:
-        if n == 0 or d == 0:
-            continue
-        if num_dyads > 0:
-            dyad = db.find_dyad(n, d)
-            if dyad is not None:
-                continue
-        db.add_dyad(n, d)
-        i += 1
-    print(f"Saved {i} dyads up to int limit {dyadLimit} up to harmonic {harmonic_extension}")
-
-def BuildTriads(db:RatioDb, integerLimit=100, complexity_limit=27_000_000, harmonic_extension=64, triad_start_harmonic=1):
-    num_triads = db.get_count("triads")
-    print(f"Currently {num_triads} triads")
-
-    print(f'BuildTriads - generating triad set with params {integerLimit} - {complexity_limit} - {harmonic_extension} - {triad_start_harmonic}...')
-    triads = get_triplet_basis(integerLimit, harmonic_extension, complexity_limit, start_harmonic=triad_start_harmonic)
-    print(f'BuildTriads - generated {len(triads)} triads')
-
-    i = 0
-    last_root = 0
-    for r,m,d in triads:
-        if r != last_root:
-            last_root = r
-            print(f"BuildTriads - on root {r}")
-
-        if r > m or r > d or m > d:
-            raise Exception(f"Invalid triad syntax: {r}:{m}:{d}")
-        if num_triads > 0:
-            triad = db.find_triad(r, m, d)
-            if triad is not None:
-                continue
-        db.add_triad(r, m, d)
-        i += 1
-
-    print(f"BuildTriads - Saved {i} triads with int limit {integerLimit} up to harmonic {harmonic_extension} with complexity limit {complexity_limit}")
-
-def BuildRatioDb(db: RatioDb, harmLimit=1024, dyadLimit=512, triadLimit=128, harmonic_extension=32, triad_start_harmonic=1):
-    BuildHarmonics(db, harmLimit)
-    BuildDyads(db, dyadLimit, harmonic_extension)
-    BuildTriads(db, triadLimit, harmonic_extension=harmonic_extension, triad_start_harmonic=triad_start_harmonic)
-
 if __name__ == "__main__":
     ratioDb = RatioDb()
-    # BuildRatioDb(ratioDb, 0, 0, 128, 4, 100)
