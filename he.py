@@ -448,7 +448,13 @@ class HarmonicEntropy:
 
         if self.updateWeights:
             if self.weight_func is None:
-                self.basis_weights = np.reciprocal(np.sqrt(np.prod(self.basis_periods, axis=1)))
+                self.basis_weights = np.zeros(self.basis_periods.shape[0])
+                for i in range(self.basis_weights.shape[0]):
+                    unique = np.unique(self.basis_periods[i, :])
+                    # root = 1 / (2 if unique.size == 3 else 3)
+                    self.basis_weights[i] = np.reciprocal(np.float_power(np.prod(unique), 1.0 / unique.size)) # 1 / kth_root(...)
+                    # self.basis_weights[i] =  np.reciprocal(np.float_power(np.prod(self.basis_periods[i, :]), root)) # 1 / sqrt(...) or for dyads 3root(...)
+                # self.basis_weights = np.reciprocal(np.sqrt(np.prod(self.basis_periods, axis=1)))
             else:
                 self.basis_weights = np.reciprocal(self.weight_func(self.basis_periods))
 
