@@ -53,7 +53,7 @@ def create_plot(data, title="Plot", xlabel="X", ylabel="Y", **kwArgs):
                     if kw.endswith("label"):
                         continue
                     
-                    labelKw = f'{kw}-label'
+                    labelKw = f'{kw}_label'
                     label = kwArgs[labelKw]
                     plt.plot(kwArgs[kw], label=label)
                     num_plots += 1
@@ -641,7 +641,7 @@ class HarmonicEntropy:
         return maskPad - entropy
 
     # Quickest way to get the data
-    def getEntropy(self, loadFile=True):
+    def getEntropy(self, loadFile=True, saveFile=False):
         if self.he3:
             file = os.path.join(os.path.dirname(__file__), "he_data", "3he_{}.npy".format(self.suffix()))
         else:
@@ -653,6 +653,10 @@ class HarmonicEntropy:
                 self.loadedEntropyFile = file
         else:
             self.calculate()
+
+            if saveFile:
+                self.saveEntropy()
+
         return self.Entropy
 
     def calculate(self):
@@ -764,7 +768,7 @@ class HarmonicEntropy:
             for kw in self.EntropyAltWeights:
                 key = f'plot-{kw}'
                 plotArgs[key] = self.EntropyAltWeights[kw]
-                plotArgs[f'{key}-label'] = kw
+                plotArgs[f'{key}_label'] = kw
             
             weight_name = "all"
 
