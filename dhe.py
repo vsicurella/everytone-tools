@@ -24,11 +24,38 @@ class DeltaHarmonicEntropy:
         self.x_res = 1
 
         self.int_limit = 100
-    
+        self.spread = 10
+        self.alpha = 7
 
         self.updateX = True
         self.updateHe = True
         self.recalculate = True
+
+        self.he2 = HarmonicEntropy()
+        self.he3 = HarmonicEntropy(he3=True)
+
+    def update(self, **kwArgs):
+
+        getValue = lambda kw: kwArgs[kw]
+        kw = "int_limit"
+        if kw in kwArgs and self.int_limit != getValue(kw):
+            self.int_limit = getValue(kw)
+            self.updateHe = True
+
+        kw = "x_range"
+        if kw in kwArgs and self.x_range != getValue(kw):
+            self.x_range = getValue(kw)
+            self.updateX = True
+
+        kw = "spread"
+        if kw in kwArgs and self.spread != getValue(kw):
+            self.spread = getValue(kw)
+            self.recalculate = True
+
+        kw = "alpha"
+        if kw in kwArgs and self.alpha != getValue(kw):
+            self.alpha = getValue(kw)
+            self.recalculate = True
 
     def _prepare_x_axis_(self):
         self.x_range_cents = ratio_to_cents(self.x_range)
@@ -37,24 +64,28 @@ class DeltaHarmonicEntropy:
         self.x_length = len(self.x_cents)
         self.x_dec = np.exp2(self.x_cents / 1200.0)
 
-        self.he3_limit = ratio_to_cents(self.x_range * 4)
+        # self.he3_limit = ratio_to_cents(self.x_range * 4)
 
-        self.differenceEntropy = np.zeros(self.x_length)
-        self.combinationEntropy = np.zeros(self.x_length)
+        # self.differenceEntropy = np.zeros(self.x_length)
+        # self.combinationEntropy = np.zeros(self.x_length)
 
         self.updateX = False
         self.updateHe = True
 
     def _prepare_he_data_(self):
-        self.he2 = HarmonicEntropy(spread=13, N=self.int_limit, limit=self.x_range_cents, res=self.x_res)
+        args = { 's': 13, 
+                 'N': self.int_limit, 
+                 'limit': self.x_range_cents,
+                 'res': self.x_res, 
+                 'a': self.alpha
+                }
+        self.he2.update(args)
+        # self.he2.getEntropy(True, True) # need to separate basis calculation for this
         self.he2.calculate()
         self.basis_length = self.he2.basis_length
         self.basis_cents = self.he2.basis_cents
 
-        self.spread = 10
-        self.alpha = self.he2.a
-
-        self.he3 = HarmonicEntropy(spread=15, N=self.int_limit, limit=self.he3_limit, he3=True)
+        # self.he3 = HarmonicEntropy(spread=15, N=self.int_limit, limit=self.he3_limit, he3=True)
         # self.he3.calculate()
         # self.EntropyHe3 = self.he3.getEntropy(True, True)
         # self.he3.saveEntropy()
@@ -66,7 +97,7 @@ class DeltaHarmonicEntropy:
         plt = create_plot(self.he2.Entropy, "Difference 3HE (2DHE) over 2HE", 
                 plot_dhe=self.differenceEntropy, plot_dhe_label='2DHE',
 
-                # plot_dhe_weights=self.dheWeights, plot_dhe_weights_label='DHE Weights'
+                # plot_dhe_weights=self.dheWeights, plot_dhe_weights_label='DHE Weights',
                 plot_che=self.combinedEntropy, plot_che_label='2HE + 2DHE',
 
                 # plot_2dhe=self.he2.Entropy + self.differenceEntropy, plot_2dhe_label="2HE+DHE",
@@ -131,14 +162,21 @@ class DeltaHarmonicEntropy:
                 weights[i] = 1 / np.sqrt(est_weight)
 
 
-        self.dheWeights = ( 0 - weights )
+        self.dheWeights = weights
 
         s_range = self.spread * 5
         spread_x = np.arange(-s_range, s_range, 1)
         self.dheSpread = np.exp(-(spread_x**2) / (2*self.spread**2))
+        
+        # hacky overflow (?) fix
+        np.putmask(self.dheSpread, self.dheSpread < 0, 0)
 
         psi = convolve(self.dheWeights, self.dheSpread, 'same')
         pa = convolve(self.dheWeights ** self.alpha, self.dheSpread ** self.alpha, 'same')
+        
+        # hacky overflow (?) fix
+        np.putmask(psi, psi < 0, 0)
+        np.putmask(pa, pa < 0, 0)
 
         sigma = 1e-16
         alpha = self.alpha
@@ -228,6 +266,10 @@ if __name__ == '__main__':
 
     dhe = DeltaHarmonicEntropy()
     dhe.calculate()
+
+    # dhe.update(int_limit=200, spread=10)
+    # dhe.calculate()
+
     dhe.doPlotting()
 
 
