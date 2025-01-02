@@ -6,3 +6,5 @@ bb*
 hentropy.m
 *.code-workspace
 farey10000*.npy
+scratch.ipynb
+dhe.md
