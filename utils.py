@@ -79,7 +79,7 @@ def approximate_ratio(decimal_list, int_limit=1024, max_cents_tolerance=0.6):
     shape = (len(decimal_list), 2)
     ratios = np.ndarray(shape, dtype=np.uint32)
     error = 0
-    errors = np.ndarray(1, shape[0])
+    errors = np.zeros(shape[0])
 
     # get approximated dyads
     for k in range(shape[0]):
