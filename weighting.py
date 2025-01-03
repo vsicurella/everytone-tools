@@ -11,7 +11,7 @@ def he_n_root(ratio):
     return np.power(np.prod(unique), 1 / unique.size)
 
 def he_decimal_approx(decimal_list, int_limit:int=256, tolerance:float=0.6):
-    (harmonics, errors) = utils.approximate_ratio(decimal_list, int_limit, tolerance)
+    harmonics = utils.approximate_ratio(decimal_list, int_limit, tolerance)
 
     # TODO factor in errors
 
