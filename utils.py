@@ -21,7 +21,7 @@ def cents_to_ratio(cents):
 
 def get_cf(num, maxdepth=20, round0thresh=1e-5):
     n = num
-    cf = [] # the continued fraction
+    cf = []
     for i in range(maxdepth):
         cf.append(int(n))
         n -= cf[i]
@@ -53,6 +53,50 @@ def get_convergent(cf, depth=-1):
         (num, den) = (den, num)
         
     return (den, num)
+
+def get_bcf(num, maxdepth=20, round0thresh=1e-7):
+    n = num
+    bcf = []
+    for i in range(maxdepth):
+        bcf.append(int(n) + 1)
+        n = bcf[i] - n
+        if (n > round0thresh):
+            n = 1 / n
+        else:
+            break
+
+    return bcf
+
+def get_bcf_until(num, numTwos=64, numTest=None, max_depth=1024, round0thresh=1e-7):
+    n = num
+    bcf = []
+    i = 0
+    count_2s = 0
+
+    if numTest is None:
+        numTest = lambda x: False
+
+    for i in range(max_depth):
+        bcf.append(int(n) + 1)        
+        if bcf[i] == 2:
+            count_2s += 1
+        else:
+            count_2s = 0
+
+        n = bcf[i] - n
+
+        if n <= round0thresh:
+            break
+
+        if count_2s >= numTwos:
+            break
+
+        if numTest(bcf[i]):
+            break
+
+        n = 1 / (n)
+
+    return bcf
 
 def getUniqueFilename(filename, type):
     out = os.path.join(f'{filename}.{type}')
