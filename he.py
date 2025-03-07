@@ -414,18 +414,26 @@ class HarmonicEntropy:
 
         if option == 'default' or option is None or option == 'sqrtnd':
             name = 'sqrt(nd)'
+
+        elif option == 'cfhypsum':
+            weight_cf_digit = np.vectorize(lambda x: np.sqrt(1+x*x))
+            # weight_ratio = lambda ratio: np.sum(weight_cf_digit(np.asarray(get_cf(ratio))))
+            # (1 - (1 - 0.5 / np.log2(np.sum(np.vectorize(lambda x: np.sqrt(1+x*x))(np.asarray(cf))))) ** 3)
+            # weight_ratio = lambda ratio: 1 - (1 - 1 / (2 * np.log2(np.sum(weight_cf_digit(np.asarray(get_cf(ratio)))))) ** 2)
+            weight_ratio = lambda ratio: 1 / (2 * np.log2(np.sum(weight_cf_digit(np.asarray(get_cf(ratio))))))
+            weigh = lambda basis: np.sum(np.vectorize(weight_ratio)((basis[:, 1:] / basis[:,:-1])), axis=1) / basis.shape[1]
         elif option == 'lencf':
             weigh_ratio = lambda ratio: len(get_cf(ratio))
-            weigh = lambda a: np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1)
+            weigh = lambda basis: np.prod(np.vectorize(weigh_ratio)(basis[:, 1:] / basis[:,:-1]), axis=1)
             name = "lencf"
         elif option == 'lenmaxcf':
             weigh_cf = lambda cf: len(cf) * max(cf)
             weigh_ratio = lambda ratio: weigh_cf(get_cf(ratio))
-            weigh = lambda a: np.sqrt(np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1))
+            weigh = lambda basis: np.sqrt(np.prod(np.vectorize(weigh_ratio)(basis[:, 1:] / basis[:,:-1]), axis=1))
             name = "sqrt(len(cf)*max(cf))"
         elif option == 'sumcf':
             weigh_ratio = lambda ratio: sum(get_cf(ratio))
-            weigh = lambda a: np.sqrt(np.prod(np.vectorize(weigh_ratio)(a[:, 1:] / a[:,:-1]), axis=1))
+            weigh = lambda basis: np.sqrt(np.prod(np.vectorize(weigh_ratio)(basis[:, 1:] / basis[:,:-1]), axis=1))
             name = "sum(cf)"
         elif option == 'all':
             name = 'all'
@@ -441,7 +449,7 @@ class HarmonicEntropy:
 
         self.weight_option = option
         self.weight_func = weigh
-        self.weight_func_name = name
+        self.weight_func_name = name or option
 
     def _weight_basis(self):
         self._vprint(1, 'Weighting...')
@@ -450,7 +458,7 @@ class HarmonicEntropy:
             if self.weight_func is None:
                 self.basis_weights = np.reciprocal(np.sqrt(np.prod(self.basis_periods, axis=1)))
             else:
-                self.basis_weights = np.reciprocal(self.weight_func(self.basis_periods))
+                self.basis_weights = self.weight_func(self.basis_periods)
 
         if self.updateWeights or self.updateAlpha:
             self.basis_weight_alphas = self.basis_weights ** self.a
@@ -495,7 +503,7 @@ class HarmonicEntropy:
                     norm = self.basis_cents / self.limit
                     theta = norm[:,0] * np.pi * self.period_harmonic
                     radOrder = 1 if "polar-rad-order" not in kwArgs else kwArgs["polar-rad-order"]
-                    rad = ((norm[:,1] + 1) ** radOrder - 1) / (2**radOrder - 1)
+                    rad = np.log2(((norm[:,1] + 1) ** radOrder - 1) / (2**radOrder - 1))
                     x = np.rint((rad * np.cos(theta) + 1) * 0.5 * (self.x_length - 1)).astype(np.uint32)
                     y = np.rint((rad * np.sin(theta) + 1) * 0.5 * (self.x_length - 1)).astype(np.uint32)
                     return (x, y)
@@ -836,7 +844,7 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--res', type=float, help="Resolution of x-axis in cents")
     parser.add_argument('-l', '--limit', type=float, help="Last cents value to calculate")
 
-    parser.add_argument('-w', '--weight', choices=['default', 'sqrtnd', 'lencf', 'lenmaxcf', 'sumcf', 'all'])
+    parser.add_argument('-w', '--weight', choices=['default', 'sqrtnd', 'cfhypsum', 'lencf', 'lenmaxcf', 'sumcf', 'all'])
     parser.add_argument('-t', '--tx', choices=['default', 'lin', 'polar', 'odd-split'])
 
     parser.add_argument('--ypad', type=float, help='Add value to entropy results')
