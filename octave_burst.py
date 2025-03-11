@@ -4,7 +4,7 @@ import bisect
 from utils import *
 import primes
 
-def create_burst(scale, period_cents=1200, theta_scale=2, radius_denominator=0):
+def create_burst(scale, period_cents=1200, theta_scale=2, radius_denominator=0, flip_radius=False):
     max_edo = 1
     for s in scale:
         if s[1] > max_edo:
@@ -17,23 +17,29 @@ def create_burst(scale, period_cents=1200, theta_scale=2, radius_denominator=0):
     # rad_scale = math.log2(max_edo)
 
     theta = [ EaseIoSlope(s[0] / period_cents, theta_scale) * (math.pi * 2) for s in scale ]
-    mag = [ math.log2(2 - s[1]/radius_denominator + 1e-4) for s in scale ]
+
+    if flip_radius:
+        mag_distances = [ (s[1] / radius_denominator) + 1e-4 for s in scale ]
+    else:
+        mag_distances = [ 1 - (s[1] / radius_denominator) + 1e-4 for s in scale ]
+
+    mag = [ math.log2(2 - d) for d in mag_distances ]
 
     return (theta, mag)
 
-def et_burst_scale(min_edo=1, max_edo=31, primeFilters=True, primesOnly=True, primeList=[2,3,5,7,11,13,17,19,23,29,31]):
+def et_burst_scale(min_edo=1, max_edo=31, primeFilters=False, primesOnly=True, primeList=[2,3,5,7,11,13,17,19,23,29,31]):
     octave_cents = 1200
     cents = [(0, 1), (octave_cents, 1)]
 
-    primeList.sort()
-    max_composite_prime = primeList[-1]
+    # primeList.sort()
+    # max_composite_prime = primeList[-1]
 
     for edo in range(min_edo, max_edo + 1):
         step = octave_cents / edo
 
-        if primeFilters:
-            if primesOnly and not primes.is_prime(edo):
-                continue
+        # if primeFilters:
+        #     if primesOnly and not primes.is_prime(edo):
+        #         continue
             
             # skip = True
             # if edo > max_composite_prime:
@@ -66,19 +72,35 @@ def temperament_burst(generator=696.77, period=1200.0, size=7, max_edo=313, mode
         edo_gens.append((gen, edo))
 
     burst = [ (0, 1), (period, 1) ]
+    # dbg = {}
+    # create one for every edo that supports this temperament
     for (gen,edo) in edo_gens:
+        # dbg_edo = []
         gen_cents = period / edo * gen
         i = mode
         tones = 0
-        while tones < size and tones < edo:
-             tones += 1
-             cents = round((i * gen_cents) % period, 6)
-             i += 1
-             if cents == 0:
-                 continue
-             
-             bisect.insort(burst, (cents, edo))
-        
+        notes_to_add = min(size, edo)
+        while tones < notes_to_add:
+            tones += 1
+            
+            cents = round((gen_cents * (tones + i)) % period, 6)
+            edo_degree = (gen * (tones + i)) % edo
+            
+            min_edo = edo
+            gen_mult = math.gcd(edo_degree, edo)
+            if gen_mult > 1:
+                min_edo = edo / gen_mult
+
+            i += 1
+            if cents == 0:
+                continue
+            
+            bisect.insort(burst, (cents, min_edo))
+    #         dbg_edo.append((cents, min_edo))
+    #     dbg[edo] = dbg_edo
+
+    # print(burst)
+    # print(dbg)
     return burst
 
 
