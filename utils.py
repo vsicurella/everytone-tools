@@ -179,6 +179,37 @@ def approximate_ratio(decimal_list, int_limit=1024, max_cents_tolerance=0.6, pas
         return (approximation, errors)
     return approximation
 
+def get_edo_approx(cents, cents_threshold, max_edo=313, max_depth=100, round_threshold=0.0000001):
+    r_2 = round(cents / 1200, 6)
+    cf = get_cf(r_2, max_depth, round_threshold)
+
+    edo = 1
+    degree = 1
+    error = 0
+
+    for i in range(1, len(cf)):
+        (next_degree, next_edo) = get_convergent(cf, i)
+
+        if edo > max_edo:
+            break
+        
+        edo = next_edo
+        degree = next_degree
+        
+        approx = 1200 / edo * degree
+        error = cents - approx
+
+        if abs(error) <= cents_threshold:
+            break
+
+    return (edo, degree, error)
+
+# EASING FUNCTIONS
+
+def EaseIoSlope(t, a=2):
+    d_base = 1 + 10 ** (a * 0.5)
+    return (1.0 / (1 + 10 ** (a * (0.5 - t))) - 1 / (d_base)) / (1.0 - 2 / d_base)
+
 if __name__ == '__main__':
     import random
     import sys
